@@ -1,0 +1,46 @@
+{
+  "name": "fact-check",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "@vercel/blob": "^2.8.0",
+    "@xpoz/xpoz": "^0.6.12",
+    "drizzle-orm": "^0.45.2",
+    "jose": "^6.1.3",
+    "jsdom": "^27.0.0",
+    "livekit-client": "^2.17.0",
+    "livekit-server-sdk": "^2.14.0",
+    "next": "16.3.2",
+    "postgres": "^3.4.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
+    "youtube-transcript": "^1.3.1",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.5",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.2",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^3.2.4"
+  }
+}
