@@ -2,18 +2,30 @@
   "name": "fact-check",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
-    "dev": "next dev",
+    "dev": "concurrently -k -n web,transcriber -c cyan,green \"next dev\" \"node --env-file-if-exists=.env agents/transcriber.mjs dev\"",
+    "dev:web": "next dev",
+    "agent:dev": "node --env-file-if-exists=.env agents/transcriber.mjs dev",
+    "agent:start": "node agents/transcriber.mjs start",
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build",
+    "check:env:web": "node --env-file-if-exists=.env scripts/check-env.mjs web",
+    "check:env:agent": "node --env-file-if-exists=.env scripts/check-env.mjs agent",
+    "build:vercel": "npm run check:env:web && npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:generate": "node --env-file-if-exists=.env node_modules/drizzle-kit/bin.cjs generate",
+    "db:migrate": "node --env-file-if-exists=.env scripts/migrate.mjs"
   },
   "dependencies": {
+    "@livekit/agents": "^1.7.0",
+    "@livekit/rtc-node": "^0.13.34",
     "@mozilla/readability": "^0.6.0",
     "@vercel/blob": "^2.8.0",
     "@xpoz/xpoz": "^0.6.12",
@@ -36,6 +48,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^10.0.5",
     "drizzle-kit": "^0.31.5",
     "eslint": "^9",
     "eslint-config-next": "16.3.2",

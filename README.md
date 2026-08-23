@@ -10,11 +10,7 @@ CivicLens is an automatic-language, evidence-first fact-checking application for
 
 ## Demo
 
-The walkthrough below was captured from the working local application. It shows the landing page, the persistent room created for the requested live stream, and a captions-enabled room with automatically detected English transcript timestamps.
-
-<video src="public/demo/civiclens-walkthrough.mp4" controls poster="public/demo/civiclens-room.png" width="100%"></video>
-
-[Watch or download the 16-second MP4 walkthrough](public/demo/civiclens-walkthrough.mp4)
+The screenshots below were captured from the working local application. They show the landing page, the persistent room created for the requested live stream, and a captions-enabled room with automatically detected English transcript timestamps.
 
 | Automatic-language entry | Successful caption extraction |
 | --- | --- |
@@ -26,14 +22,14 @@ Tested with [`youtube.com/live/Nq2wYlWFucg`](https://www.youtube.com/live/Nq2wYl
 
 ![Requested YouTube live room](public/demo/civiclens-live-room.jpg)
 
-For this specific source, YouTube reports that the owner disabled third-party embedding and public captions. CivicLens therefore shows the YouTube restriction, keeps an **Open source** action, reports incomplete transcript coverage, offers paste/upload fallback, and retries while the room is open. It does not fabricate a transcript. A second public YouTube source with captions verified 357 timestamped segments and automatic `en` detection.
+This source does not expose reusable public captions, and embed availability has varied by YouTube client. CivicLens keeps an **Open source** action and reports incomplete source-caption coverage instead of fabricating text. The LiveKit fallback was also verified with this URL: sharing the YouTube browser tab with **Share tab audio** produced interim and final room transcripts, automatically detecting English and Hindi during code-switched speech. A second public YouTube source with captions separately verified 357 timestamped segments and automatic `en` detection.
 
 ## Implemented product
 
 - One URL entry point and canonical IDs for YouTube, X, Instagram, Reddit, TikTok, articles, and generic public pages.
 - Persistent YouTube rooms: the same video ID always resolves to the same room, whether the video is live or recorded.
-- Host-controlled shared YouTube play/pause, anonymous LiveKit presence, voice, chat, moderation, and opt-in video. Camera is off on every join.
-- Automatic caption/transcript checks when the room opens, two-minute visible-room refreshes, timestamped transcript layers, and live fact cards.
+- Host-controlled shared YouTube play/pause, anonymous LiveKit presence, voice, chat, moderation, opt-in camera, and browser-tab video/audio sharing. Camera is off on every join.
+- A server-side LiveKit Agents worker transcribes shared tab audio with automatic language detection and streams interim/final text into the room inspector. Public-caption checks continue as an independent source layer.
 - Xpoz ingestion for X, Instagram, Reddit, and TikTok, with managed-extractor and paste/upload fallbacks.
 - SSRF-safe fetching, safe redirects, MIME and size limits, article Readability extraction, one-level linked-page extraction, and visible coverage manifests.
 - Multilingual structured claim extraction and evidence-constrained assessment through OpenRouter.
@@ -52,15 +48,14 @@ npm run db:migrate
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Leave `FIXTURE_MODE=true` for a clearly labeled provider-free UI demo. Set it to `false` to use live extraction, models, and evidence retrieval.
+`npm run dev` starts both Next.js and the LiveKit transcription worker. Open [http://localhost:3000](http://localhost:3000), enter a YouTube URL, then select **Share video + audio**. Choose the YouTube browser tab and keep **Share tab audio** enabled. The transcript appears in the room's Transcript tab; no language selection is required.
+
+Leave `FIXTURE_MODE=true` for a clearly labeled provider-free fact-check UI demo. Set it to `false` to use live extraction, models, and evidence retrieval. Live room transcription uses LiveKit Cloud Inference and only requires the three LiveKit credentials.
 
 Run the release checks:
 
 ```bash
-npm run lint
-npm run typecheck
-npm test
-npm run build
+npm run verify
 ```
 
 ## Environment and key security
@@ -78,13 +73,13 @@ Required for a full production deployment:
 | `OPENROUTER_API_KEY` | Claim extraction, vision, and evidence assessment |
 | `TAVILY_API_KEY` | Official-domain and broader-web evidence search |
 | `XPOZ_API_KEY` | X, Instagram, Reddit, and TikTok ingestion/search |
-| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Presence, voice, opt-in video, chat, and playback data |
+| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Presence, voice/video sharing, playback data, and the server transcription worker |
 | `BLOB_READ_WRITE_TOKEN` | Temporary fallback uploads |
 
 Recommended by feature:
 
 - `GOOGLE_FACT_CHECK_API_KEY` adds prior professional fact-check reviews.
-- `OPENAI_API_KEY` enables audio/video transcription when usable media is available.
+- Live room audio is transcribed through LiveKit Cloud Inference. Uploaded audio/video requires the configurable managed media extractor and is otherwise marked partial.
 - `MANAGED_EXTRACTOR_URL` and `MANAGED_EXTRACTOR_API_KEY` add compliant dynamic-page, platform-media, frame, and caption fallback coverage.
 - `TRIGGER_WEBHOOK_URL` and `TRIGGER_SECRET_KEY` move long analyses to a managed worker.
 - `SENTRY_DSN` enables production error reporting.
@@ -101,9 +96,22 @@ The verified OpenRouter defaults are `google/gemini-3.7-flash` and `google/gemin
    npm run db:migrate
    ```
 
-4. Import the repository into Vercel or run `npx vercel`. The checked-in `vercel.json` enables Fluid Compute, and the analysis routes request a five-minute maximum duration.
-5. For reliable long video runs, configure `TRIGGER_WEBHOOK_URL`; the signed job endpoint is `POST /api/jobs/analysis` with `Authorization: Bearer $TRIGGER_SECRET_KEY`.
-6. Run one production smoke test per configured provider. Verify the result page shows original claims, localized assessments, citations, extraction coverage, provenance, and limitations.
+   PostgreSQL may print notices that the `drizzle` schema or `__drizzle_migrations` table already exists. Those notices are expected on repeat runs; the command now finishes with an explicit success line when all migrations are applied.
+
+4. Push the repository to GitHub. The checked-in `Verify` workflow runs TypeScript, lint, tests, and the production build on pull requests and `main`.
+5. Import the repository into Vercel. The checked-in `vercel.json` uses Node 24, `npm ci`, Fluid Compute, and a production build that fails early when required server environment variables are missing.
+6. Deploy the persistent transcriber separately to LiveKit Cloud from the repository root:
+
+   ```bash
+   lk cloud auth
+   lk agent create
+   ```
+
+   The checked-in `Dockerfile` runs `npm run agent:start`. The LiveKit CLI creates `livekit.toml` with the project and agent IDs; commit that generated non-secret configuration before later `lk agent deploy` runs.
+
+7. Vercel hosts the Next.js application while LiveKit Cloud keeps the transcription worker connected and available for room jobs.
+8. For reliable long video runs, configure `TRIGGER_WEBHOOK_URL`; the signed job endpoint is `POST /api/jobs/analysis` with `Authorization: Bearer $TRIGGER_SECRET_KEY`.
+9. Run one production smoke test per configured provider. Verify the result page shows original claims, localized assessments, citations, extraction coverage, provenance, and limitations.
 
 Do not run database migrations automatically in every serverless function build. Keep the direct database URL restricted to deployment/CI and use the pooled URL at runtime.
 

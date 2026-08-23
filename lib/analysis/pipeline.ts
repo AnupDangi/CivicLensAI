@@ -30,7 +30,7 @@ export async function runAnalysis(id: string): Promise<void> {
     await updateAnalysis(id, { stage: "TRANSCRIBING", progress: 36 });
     if(!fixtureMode){
       extracted.artifacts=await Promise.all(extracted.artifacts.map(async(artifact)=>{
-        if(!["IMAGE","AUDIO","VIDEO"].includes(artifact.kind)||artifact.coverage==="COMPLETE")return artifact;
+        if(!["IMAGE","AUDIO","VIDEO"].includes(artifact.kind)||artifact.coverage==="COMPLETE"||artifact.extractionMethod==="youtube-embed")return artifact;
         try{return await analyzeUploadedArtifact({url:artifact.sourceUrl,kind:artifact.kind as "IMAGE"|"AUDIO"|"VIDEO"});}
         catch(error){return {...artifact,coverage:"PARTIAL" as const,failureReason:error instanceof Error?error.message:"Media enrichment failed."};}
       }));

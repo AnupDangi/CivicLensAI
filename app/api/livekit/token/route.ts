@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     const { room, role, reused } = await getOrCreateRoom(body.videoId, body.visitorId);
     const identity = `guest-${body.visitorId}`;
     const token = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, { identity, name: guestName(body.visitorId), metadata: JSON.stringify({ role }) });
-    token.addGrant({ roomJoin: true, room: room.name, canPublish: true, canSubscribe: true, roomAdmin: role === "HOST" });
+    token.addGrant({ roomJoin: true, room: room.name, canPublish: true, canPublishData: true, canSubscribe: true, roomAdmin: role === "HOST" });
     return NextResponse.json({ configured: true, token: await token.toJwt(), url: process.env.LIVEKIT_URL, roomName: room.name, role, reused, hostCapability: role === "HOST" ? await signHostCapability(room.name, body.visitorId) : undefined, displayName: guestName(body.visitorId) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Could not join the room." }, { status: 400 });

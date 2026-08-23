@@ -1,0 +1,10 @@
+.git
+.github
+.next
+.vercel
+node_modules
+coverage
+.env
+.env.*
+npm-debug.log*
+public/demo
