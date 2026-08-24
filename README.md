@@ -49,7 +49,7 @@ npm run db:migrate
 npm run dev
 ```
 
-`npm run dev` starts both Next.js and the named LiveKit transcription worker. Open [http://localhost:3000](http://localhost:3000), enter a YouTube URL, then select **Share video + audio**. Choose the YouTube browser tab and keep **Share tab audio** enabled. CivicLens dispatches the worker as soon as someone joins the room; its transcript is broadcast to every room participant and opens their Transcript tab as captions arrive. No language selection is required.
+`npm run dev` starts both Next.js and the named LiveKit transcription worker. Open [http://localhost:3000](http://localhost:3000), enter any supported public URL, then open its civic room. YouTube has embedded host playback controls. For articles, public pages, and social posts, open the source in a browser tab and select that tab with **Start live transcription** and **Share tab audio** enabled. The room host starts the single worker; final captions are saved, broadcast to everyone in the room, and fact-checked in the background without forcing viewers onto the Transcript tab. No language selection is required.
 
 Leave `FIXTURE_MODE=true` for a clearly labeled provider-free fact-check UI demo. Set it to `false` to use live extraction, models, and evidence retrieval. Live room transcription uses LiveKit Cloud Inference and only requires the three LiveKit credentials.
 
@@ -57,6 +57,7 @@ Run the release checks:
 
 ```bash
 npm run verify
+npm run validate:sources
 ```
 
 ## Environment and key security
@@ -120,6 +121,12 @@ Do not run database migrations automatically in every serverless function build.
 
 “Any site” means best-effort extraction from any public HTTP/HTTPS URL. Dedicated behavior is guaranteed only for direct supported post URLs, YouTube video/live URLs, and article-like pages. Profile/feed URLs, private or login-only content, deleted sources, robots restrictions, and paywall bypass are excluded.
 
+### Public HTML scraping in Next.js
+
+Generic pages and articles are extracted in the server-side analysis pipeline, never in the browser. CivicLens validates each URL and every redirect against private-network access, fetches accepted HTML with MIME and 5 MB limits, then parses it with JSDOM and Mozilla Readability. If a publisher returns 401, 403, or 429 to the cloud runtime, the pipeline retries the already-validated public URL through the browser-capable reader fallback and records `reader-fallback-readability` in the coverage manifest. The fallback does not grant access to private, login-only, or paywalled content.
+
+Use `npm run validate:sources` to run the URL normalization, generic HTML extraction, 403-fallback, and X/Instagram/Reddit/TikTok ingestion-path checks before release.
+
 YouTube public captions are best-effort. The official YouTube caption-download API requires authorization to edit the video, so arbitrary public videos use the managed extractor when configured and a public-caption adapter otherwise. If captions are disabled, the UI requests an upload/paste fallback and marks coverage partial.
 
 Safety limits are 100,000 extracted characters, 12 images, 30 minutes or 250 MB for non-YouTube media, and 60 keyframes. Larger or inaccessible inputs are marked partial instead of complete.
@@ -139,7 +146,7 @@ POST /api/rooms/:id/moderation
 POST /api/jobs/analysis
 ```
 
-`POST /api/analyses` returns `202`, an analysis ID, a shareable result URL, and the destination. YouTube destinations are canonical room URLs; other sources open the server-rendered shareable analysis page. Successful runs younger than 24 hours are reused unless `refresh: true` is requested.
+`POST /api/analyses` returns `202`, an analysis ID, a shareable result URL, and a canonical civic-room destination for every supported source. The landing page renders recent rooms at request time, so new article and public-link rooms appear in **What the community is checking**. Successful runs younger than 24 hours are reused unless `refresh: true` is requested.
 
 ## Trust boundaries
 

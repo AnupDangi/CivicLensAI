@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { AnalysisRecord, AnalysisResult, AnalysisStage, NormalizedSource } from "@/lib/domain";
 import { getDatabase } from "@/lib/db/client";
 import { analysisRuns, claims, contentArtifacts, evidence, factChecks, sources } from "@/lib/db/schema";
@@ -73,6 +73,23 @@ export async function getLatestAnalysisForSource(canonicalKey: string): Promise<
     .orderBy(desc(analysisRuns.createdAt))
     .limit(1);
   return row ? getAnalysis(row.id) : undefined;
+}
+
+/** Claim a queued analysis exactly once. This makes after()-based work safe to
+ * retry from the polling route if a serverless background invocation is lost. */
+export async function claimQueuedAnalysis(id: string): Promise<boolean> {
+  const db = getDatabase();
+  if (!db) {
+    const record = memory.get(id);
+    if (!record || record.stage !== "RESOLVING") return false;
+    memory.set(id, { ...record, stage: "EXTRACTING", progress: 18, updatedAt: now() });
+    return true;
+  }
+  const claimed = await db.update(analysisRuns)
+    .set({ stage: "EXTRACTING", progress: 18, updatedAt: new Date() })
+    .where(and(eq(analysisRuns.id, id), eq(analysisRuns.stage, "RESOLVING")))
+    .returning({ id: analysisRuns.id });
+  return claimed.length > 0;
 }
 
 export async function updateAnalysis(id: string, patch: Partial<Pick<AnalysisRecord, "stage" | "progress" | "result" | "failureReason">>): Promise<void> {

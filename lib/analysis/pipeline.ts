@@ -1,6 +1,6 @@
 import "server-only";
 import type { AnalysisResult, ContentArtifact, ExtractedSource } from "@/lib/domain";
-import { getAnalysis, persistNormalizedResult, updateAnalysis } from "@/lib/analysis/repository";
+import { claimQueuedAnalysis, getAnalysis, persistNormalizedResult, updateAnalysis } from "@/lib/analysis/repository";
 import { factCheckArtifacts } from "@/lib/factcheck/engine";
 import { extractSource } from "@/lib/source/extract";
 import { analyzeUploadedArtifact } from "@/lib/media/analyze";
@@ -23,8 +23,8 @@ function fixtureExtraction(source: NonNullable<Awaited<ReturnType<typeof getAnal
 export async function runAnalysis(id: string): Promise<void> {
   const record = await getAnalysis(id);
   if (!record) return;
+  if (!(await claimQueuedAnalysis(id))) return;
   try {
-    await updateAnalysis(id, { stage: "EXTRACTING", progress: 18 });
     const fixtureMode = process.env.FIXTURE_MODE === "true";
     let extracted: ExtractedSource;
     if (fixtureMode) {

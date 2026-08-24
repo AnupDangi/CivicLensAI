@@ -183,6 +183,15 @@ export function CivicRoom({ source, roomId, initialAnalysisId }: { source: Norma
     room.on(RoomEvent.TrackUnsubscribed, detachRemoteTrack);
     room.on(RoomEvent.DataReceived, onData);
     room.on(RoomEvent.TranscriptionReceived, onLegacyTranscription);
+    room.on(RoomEvent.Reconnecting, () => {
+      if (mounted) setStatus((current) => ({ ...current, message: "Live room connection interrupted; reconnecting. Source evidence analysis continues in the background." }));
+    });
+    room.on(RoomEvent.Reconnected, () => {
+      if (mounted) setStatus((current) => ({ ...current, configured: true, message: "Live room reconnected. Source evidence analysis is still active." }));
+    });
+    room.on(RoomEvent.Disconnected, (reason) => {
+      if (mounted) setStatus((current) => ({ ...current, configured: false, message: `Live room disconnected${reason ? ` (${String(reason)})` : ""}. Evidence analysis remains available; refresh to reconnect the room.` }));
+    });
 
     async function connect() {
       let visitorId = localStorage.getItem("civiclens.visitorId");
@@ -290,7 +299,6 @@ export function CivicRoom({ source, roomId, initialAnalysisId }: { source: Norma
   useEffect(() => {
     let active = true;
     analysisActiveRef.current = true;
-    if (!status.configured) return () => { active = false; };
     async function poll(id: string) {
       if (transcriptStopped || !analysisActiveRef.current) return;
       const response = await fetch(`/api/analyses/${id}`, { cache: "no-store" });
@@ -306,7 +314,9 @@ export function CivicRoom({ source, roomId, initialAnalysisId }: { source: Norma
           : FINISHED_STAGES.includes(record.stage)
           ? includesLiveRoomTranscript
             ? "Live fact-check updated from saved shared-tab captions."
-            : "Source check complete. Start live transcription to verify shared-tab captions."
+            : isYouTube
+              ? "Source check complete. Use Start live transcription to add shared-tab captions."
+              : "Source text extraction and evidence check complete. Tab sharing is optional for additional live media."
           : `${record.stage.replaceAll("_", " ").toLowerCase()} · ${record.progress}%`
       );
       if (FINISHED_STAGES.includes((data as AnalysisRecord).stage)) {
@@ -370,7 +380,7 @@ export function CivicRoom({ source, roomId, initialAnalysisId }: { source: Norma
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       if (discoveryTimerRef.current) clearTimeout(discoveryTimerRef.current);
     };
-  }, [initialAnalysisId, sourceKey, sourceUrl, status.configured, status.role, transcriptStopped]);
+  }, [initialAnalysisId, isYouTube, sourceKey, sourceUrl, status.role, transcriptStopped]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -532,6 +542,7 @@ export function CivicRoom({ source, roomId, initialAnalysisId }: { source: Norma
   const canControl = status.role === "HOST" || !status.configured;
   const transcriptArtifacts = analysis?.result?.artifacts.filter((artifact) => artifact.originalText && ["AUDIO", "VIDEO", "TEXT"].includes(artifact.kind)) || [];
   const hasSourceTranscript = transcriptArtifacts.length > 0;
+  const hasServerSourceText = transcriptArtifacts.some((artifact) => artifact.kind === "TEXT" && artifact.extractionMethod !== "livekit-room-transcript");
   // A source’s scraped text must not disable tab sharing: hosts can add live
   // audio/video context for any public URL, not only YouTube videos.
   const showShareButton = status.configured && status.role === "HOST" && !screenSharing;
@@ -607,9 +618,10 @@ export function CivicRoom({ source, roomId, initialAnalysisId }: { source: Norma
         <div className="room-feed">
           {tab === "FACTS" && <>
             <div className="live-pipeline"><span className={analysis && FINISHED_STAGES.includes(analysis.stage) ? "complete" : "running"}/><div><strong>Live evidence pipeline</strong><small>{analysisMessage}</small></div></div>
+            {analysis?.stage === "FAILED" && <div className="failure"><strong>Evidence pipeline failed.</strong> {analysis.failureReason || "Retry the source to start a new analysis."}</div>}
             {analysis?.result?.claims.length
               ? <div className="room-facts">{analysis.result.claims.map((claim) => <FactCard claim={claim} key={claim.id}/>)}</div>
-              : <div className="empty-state compact"><strong>Listening for checkable claims</strong>{liveTranscripts.length ? "Saved shared-tab captions are checked in the background every 30 seconds. Claims appear here after evidence retrieval." : "Start live transcription to check the shared browser tab. Personal meeting microphones are never transcribed."}</div>}
+              : <div className="empty-state compact"><strong>{analysis?.stage === "FAILED" ? "Evidence unavailable" : "Listening for checkable claims"}</strong>{analysis?.stage === "FAILED" ? "The source details above explain what failed. You can retry from the source page." : hasServerSourceText ? "The article/page text was extracted server-side. Claims appear here after evidence retrieval; tab sharing is optional." : liveTranscripts.length ? "Saved shared-tab captions are checked in the background every 30 seconds. Claims appear here after evidence retrieval." : isYouTube ? "Use Start live transcription and choose the browser tab with Share tab audio enabled. Personal meeting microphones are never transcribed." : "Reading the public source server-side. Tab sharing is optional and only adds live audio/video context."}</div>}
             <div className="manual-check"><p className="fact-label">Priority check</p><ManualFallback/></div>
           </>}
           {tab === "TRANSCRIPT" && <>
@@ -617,7 +629,7 @@ export function CivicRoom({ source, roomId, initialAnalysisId }: { source: Norma
             {liveTranscripts.length > 0 && <article className="transcript-block live-transcript"><small><span className="status-dot"/> LiveKit room transcription</small><div className="live-transcript-lines">{liveTranscripts.map((segment) => <p className={segment.final ? "final" : "interim"} key={segment.id}><strong>{segment.participant}</strong>{segment.text}</p>)}</div></article>}
             {transcriptArtifacts.map((artifact, index) => <article className="transcript-block" key={`${artifact.kind}-${index}`}><small>{artifact.extractionMethod} · {artifact.originalLanguage}</small><pre>{artifact.originalText}</pre></article>)}
             {!liveTranscripts.length && !transcriptArtifacts.length
-              ? <div className="empty-state"><strong>{FINISHED_STAGES.includes(analysis?.stage ?? "") ? "No source transcript available" : "Transcript loading"}</strong>{FINISHED_STAGES.includes(analysis?.stage ?? "") ? "Open the public source in a browser tab, then share that tab with “Share tab audio” enabled. Live captions will appear here for everyone in the room." : "Looking for source text. You can share a browser tab with “Share tab audio” enabled to add live captions."}</div>
+              ? <div className="empty-state"><strong>{analysis?.stage === "FAILED" ? "Source extraction failed" : FINISHED_STAGES.includes(analysis?.stage ?? "") ? "No source transcript available" : "Transcript loading"}</strong>{analysis?.stage === "FAILED" ? analysis.failureReason || "Retry the source to start a new analysis." : FINISHED_STAGES.includes(analysis?.stage ?? "") ? isYouTube ? "Use Start live transcription and choose the browser tab with Share tab audio enabled to add live captions." : "The public source was checked server-side. You may share a browser tab only when you want to add live audio/video context." : "Reading source text and evidence in the background."}</div>
               : null}
           </>}
           {tab === "DISCUSS" && <>
