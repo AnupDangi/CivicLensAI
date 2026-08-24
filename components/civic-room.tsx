@@ -143,15 +143,6 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
     room.on(RoomEvent.TrackUnsubscribed, detachRemoteTrack);
     room.on(RoomEvent.DataReceived, onData);
     room.on(RoomEvent.TranscriptionReceived, onLegacyTranscription);
-    room.registerTextStreamHandler("lk.transcription", async (reader, participantInfo) => {
-      const attributes = reader.info.attributes ?? {};
-      const id = attributes["lk.segment_id"] || reader.info.id;
-      const final = attributes["lk.transcription_final"] === "true";
-      for await (const text of reader) {
-        if (!mounted || !text.trim()) continue;
-        upsertTranscript({ id, text, language: attributes["lk.transcription_language"] || "und", final, participant: participantInfo.identity });
-      }
-    });
 
     async function connect() {
       let visitorId = localStorage.getItem("civiclens.visitorId");
@@ -353,13 +344,20 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
 
   async function toggleMic() {
     const room = liveRoom.current;
-    if (!room || !status.configured || screenSharing) return;
+    if (!room || !status.configured) return;
+    const enable = !mic;
     try {
-      await room.startAudio();
-      await room.localParticipant.setMicrophoneEnabled(!mic);
-      setMic(!mic);
-    } catch {
-      setStatus((current) => ({ ...current, message: "Microphone permission was not granted." }));
+      // Publishing a microphone must not depend on speaker autoplay being
+      // unlocked. Some browsers reject startAudio until a remote track exists.
+      await room.localParticipant.setMicrophoneEnabled(enable);
+      setMic(enable);
+      setStatus((current) => ({ ...current, message: enable ? "Microphone on — your room audio is live." : "Microphone off." }));
+      void room.startAudio().catch(() => undefined);
+    } catch (error) {
+      const message = error instanceof Error && error.name === "NotAllowedError"
+        ? "Microphone permission was blocked. Allow it in your browser, then try again."
+        : "Microphone could not be started. Check your browser’s microphone permission and selected input device.";
+      setStatus((current) => ({ ...current, message }));
     }
   }
 
@@ -411,10 +409,6 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
     }
     try {
       await room.startAudio();
-      if (mic) {
-        await room.localParticipant.setMicrophoneEnabled(false);
-        setMic(false);
-      }
       const tracks = await room.localParticipant.createScreenTracks({
         audio: true,
         video: { displaySurface: "browser" },
@@ -426,9 +420,9 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
       });
       sharedTracks.current = tracks;
       for (const track of tracks) {
-        // The transcriber listens to the participant's microphone source. Publishing
-        // shared tab audio on that source lets it transcribe the video audio live.
-        const source = track.kind === Track.Kind.Video ? Track.Source.ScreenShare : Track.Source.Microphone;
+        // Tab audio is a separate source. The worker subscribes only to this
+        // explicitly shared audio, never to meeting microphones.
+        const source = track.kind === Track.Kind.Video ? Track.Source.ScreenShare : Track.Source.ScreenShareAudio;
         await room.localParticipant.publishTrack(track, { source });
         if (track.kind === Track.Kind.Video) attachLocalVideo(track, "screen");
         track.once(TrackEvent.Ended, () => void stopScreenShare());
@@ -489,7 +483,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
         <div className="room-toolbar">
           <button className="toolbar-button" onClick={() => commandPlayer("playVideo")} disabled={!canControl}>▶ Play</button>
           <button className="toolbar-button" onClick={() => commandPlayer("pauseVideo")} disabled={!canControl}>Ⅱ Pause</button>
-          <button className={`toolbar-button ${mic ? "active" : ""}`} onClick={toggleMic} disabled={!status.configured || screenSharing}>{mic ? "● Mic on" : "◌ Mic off"}</button>
+          <button className={`toolbar-button ${mic ? "active" : ""}`} onClick={toggleMic} disabled={!status.configured}>{mic ? "● Mic on" : "◌ Mic off"}</button>
           <button className={`toolbar-button ${camera ? "active" : ""}`} onClick={toggleCamera} disabled={!status.configured}>{camera ? "■ Camera on" : "▣ Camera off"}</button>
           {showShareButton ? (
             <button className="toolbar-button" onClick={toggleScreenShare} disabled={!status.configured}>▤ Share tab for live transcript</button>
