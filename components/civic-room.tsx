@@ -19,7 +19,7 @@ import { ManualFallback } from "@/components/manual-fallback";
 import { browserUuid } from "@/lib/client-id";
 import type { AnalysisRecord } from "@/lib/domain";
 
-type RoomStatus = { configured: boolean; role?: "HOST" | "PARTICIPANT"; displayName?: string; message: string };
+type RoomStatus = { configured: boolean; role?: "HOST" | "PARTICIPANT"; displayName?: string; message: string; transcriptionReady?: boolean; transcriptionError?: string };
 type ChatMessage = { id: string; author: string; body: string };
 type PlaybackCommand = "playVideo" | "pauseVideo" | "seekTo";
 type Packet =
@@ -70,6 +70,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
   const analysisActiveRef = useRef(true);
 
   const upsertTranscript = useCallback((segment: LiveTranscript) => {
+    if (segment.text.trim()) setTab("TRANSCRIPT");
     setLiveTranscripts((current) => {
       const existing = current.findIndex((item) => item.id === segment.id);
       if (existing < 0) return [...current, segment].slice(-100);
@@ -175,7 +176,11 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
         configured: true,
         role: data.role,
         displayName: data.displayName,
-        message: `${data.reused ? "Rejoined existing room" : "Created room"} as ${data.displayName}`,
+        transcriptionReady: data.transcription?.ready !== false,
+        transcriptionError: data.transcription?.error,
+        message: data.transcription?.ready === false
+          ? `Joined as ${data.displayName}; live transcript worker is unavailable.`
+          : `${data.reused ? "Rejoined existing room" : "Created room"} as ${data.displayName}`,
       });
       syncParticipants();
     }
@@ -362,6 +367,9 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
     const room = liveRoom.current;
     if (!room || !status.configured) return;
     try {
+      // A camera-button click is a user gesture. Use it to unlock remote audio
+      // playback too, otherwise browsers can show video while keeping Meet audio muted.
+      await room.startAudio();
       await room.localParticipant.setCameraEnabled(!camera);
       setCamera(!camera);
       videoStageRef.current?.querySelector('[data-video-owner="local-camera"]')?.remove();
@@ -436,8 +444,11 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
 
   const canControl = status.role === "HOST" || !status.configured;
   const transcriptArtifacts = analysis?.result?.artifacts.filter((artifact) => artifact.originalText && ["AUDIO", "VIDEO", "TEXT"].includes(artifact.kind)) || [];
-  const autoTranscriptReady = transcriptArtifacts.length > 0 || FINISHED_STAGES.includes(analysis?.stage ?? "");
-  const showShareButton = status.configured && !autoTranscriptReady && !screenSharing;
+  const hasSourceTranscript = transcriptArtifacts.length > 0;
+  // A completed analysis without an artifact means that YouTube did not expose
+  // captions. It must not hide the live-audio fallback (the state shown in the
+  // reported room screenshot).
+  const showShareButton = status.configured && status.role === "HOST" && !hasSourceTranscript && !screenSharing;
 
   const stopTranscript = useCallback(() => {
     setTranscriptStopped(true);
@@ -478,13 +489,14 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
         <div className="room-toolbar">
           <button className="toolbar-button" onClick={() => commandPlayer("playVideo")} disabled={!canControl}>▶ Play</button>
           <button className="toolbar-button" onClick={() => commandPlayer("pauseVideo")} disabled={!canControl}>Ⅱ Pause</button>
+          <button className={`toolbar-button ${mic ? "active" : ""}`} onClick={toggleMic} disabled={!status.configured || screenSharing}>{mic ? "● Mic on" : "◌ Mic off"}</button>
           <button className={`toolbar-button ${camera ? "active" : ""}`} onClick={toggleCamera} disabled={!status.configured}>{camera ? "■ Camera on" : "▣ Camera off"}</button>
           {showShareButton ? (
             <button className="toolbar-button" onClick={toggleScreenShare} disabled={!status.configured}>▤ Share tab for live transcript</button>
           ) : screenSharing ? (
             <button className="toolbar-button active" onClick={toggleScreenShare}>■ Stop sharing</button>
           ) : null}
-          {!autoTranscriptReady && !transcriptStopped ? (
+          {!hasSourceTranscript && !transcriptStopped ? (
             <button className="toolbar-button" onClick={stopTranscript}>■ Stop transcript</button>
           ) : transcriptStopped ? (
             <button className="toolbar-button active" onClick={resumeTranscript}>▶ Resume</button>
@@ -494,8 +506,8 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
         </div>
         <div className="panel-pad room-summary">
           <div><span className="eyebrow">YouTube civic room</span><h1 className="analysis-title">Watch together. Check the record.</h1></div>
-          <div className="room-live-status"><span className="status-dot"/><strong>Automatic language detection</strong><small>{analysisMessage}</small></div>
-          <p className="source-url">{status.message}. Transcript detected automatically from video.</p>
+          <div className="room-live-status"><span className="status-dot"/><strong>{status.transcriptionReady === false ? "Live transcript unavailable" : "Automatic language detection"}</strong><small>{status.transcriptionReady === false ? status.transcriptionError || "The transcription worker could not join this room." : analysisMessage}</small></div>
+          <p className="source-url">{status.message}{status.transcriptionReady === false ? " Configure and deploy the named LiveKit transcriber to restore live captions." : " Live captions are broadcast to everyone in this room."}</p>
         </div>
       </section>
       <aside className="panel room-inspector">
@@ -517,7 +529,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
             {liveTranscripts.length > 0 && <article className="transcript-block live-transcript"><small><span className="status-dot"/> LiveKit room transcription</small><div className="live-transcript-lines">{liveTranscripts.map((segment) => <p className={segment.final ? "final" : "interim"} key={segment.id}><strong>{segment.participant}</strong>{segment.text}</p>)}</div></article>}
             {transcriptArtifacts.map((artifact, index) => <article className="transcript-block" key={`${artifact.kind}-${index}`}><small>{artifact.extractionMethod} · {artifact.originalLanguage}</small><pre>{artifact.originalText}</pre></article>)}
             {!liveTranscripts.length && !transcriptArtifacts.length
-              ? <div className="empty-state"><strong>Transcript loading</strong>{analysis?.stage === "FAILED" ? "Transcript unavailable. Try pasting the video's auto-captions or use Priority check below." : autoTranscriptReady ? "Transcript is being verified. Summary will appear in FACTS when ready." : "For live videos, tap “Share tab for live transcript” and enable “Share tab audio” to transcribe the YouTube audio live. For uploaded videos, captions are fetched automatically."}</div>
+              ? <div className="empty-state"><strong>{FINISHED_STAGES.includes(analysis?.stage ?? "") ? "No public captions available" : "Transcript loading"}</strong>{FINISHED_STAGES.includes(analysis?.stage ?? "") ? "For live video, share the browser tab and enable “Share tab audio”. Live captions will then appear here for everyone in the room." : "Looking for public captions. If the stream has none, share the browser tab with “Share tab audio” enabled to start live captions."}</div>
               : null}
           </>}
           {tab === "DISCUSS" && <>

@@ -62,4 +62,9 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+// Named agents are dispatched explicitly by the web app when a Civic Room is
+// joined. Keep this value in sync with LIVEKIT_TRANSCRIBER_NAME on Vercel.
+cli.runApp(new ServerOptions({
+  agent: fileURLToPath(import.meta.url),
+  agentName: process.env.LIVEKIT_TRANSCRIBER_NAME || process.env.LIVEKIT_AGENT_NAME || "civiclens-transcriber",
+}));

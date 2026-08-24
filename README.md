@@ -48,7 +48,7 @@ npm run db:migrate
 npm run dev
 ```
 
-`npm run dev` starts both Next.js and the LiveKit transcription worker. Open [http://localhost:3000](http://localhost:3000), enter a YouTube URL, then select **Share video + audio**. Choose the YouTube browser tab and keep **Share tab audio** enabled. The transcript appears in the room's Transcript tab; no language selection is required.
+`npm run dev` starts both Next.js and the named LiveKit transcription worker. Open [http://localhost:3000](http://localhost:3000), enter a YouTube URL, then select **Share video + audio**. Choose the YouTube browser tab and keep **Share tab audio** enabled. CivicLens dispatches the worker as soon as someone joins the room; its transcript is broadcast to every room participant and opens their Transcript tab as captions arrive. No language selection is required.
 
 Leave `FIXTURE_MODE=true` for a clearly labeled provider-free fact-check UI demo. Set it to `false` to use live extraction, models, and evidence retrieval. Live room transcription uses LiveKit Cloud Inference and only requires the three LiveKit credentials.
 
@@ -100,7 +100,7 @@ The verified OpenRouter defaults are `google/gemini-3.7-flash` and `google/gemin
 
 4. Push the repository to GitHub. The checked-in `Verify` workflow runs TypeScript, lint, tests, and the production build on pull requests and `main`.
 5. Import the repository into Vercel. The checked-in `vercel.json` uses Node 24, `npm ci`, Fluid Compute, and a production build that fails early when required server environment variables are missing.
-6. Deploy the persistent transcriber separately to LiveKit Cloud from the repository root:
+6. Deploy the persistent transcriber separately to LiveKit Cloud from the repository root. Set `LIVEKIT_TRANSCRIBER_NAME=civiclens-transcriber` in both the Vercel project and the LiveKit worker deployment (or use the same custom name in both):
 
    ```bash
    lk cloud auth
