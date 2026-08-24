@@ -158,16 +158,16 @@ button { cursor:pointer; }
 .failure { border:1px solid #e2a397; background:#fff0ec; padding:18px; border-radius:12px; color:#843528; margin-top:20px; }
 .room-layout { display:grid; grid-template-columns:minmax(0,1.48fr) minmax(350px,.72fr); gap:18px; padding-block:22px 60px; }
 .room-stage-panel { box-shadow:0 22px 55px rgba(7,26,53,.09); }
-.video-wrap { position:relative; aspect-ratio:16/9; background:#061516; }
+.video-wrap { position:relative; aspect-ratio:16/9; background:#061516; padding-bottom:28px; }
 .video-wrap iframe { width:100%; height:100%; border:0; }
 .video-badge { position:absolute; top:14px; left:14px; border-radius:999px; padding:7px 10px; background:rgba(16,42,43,.88); color:var(--white); font-size:11px; font-weight:800; pointer-events:none; }
 .live-analysis-badge { position:absolute; top:14px; right:14px; display:flex; align-items:center; gap:8px; border-radius:999px; padding:7px 10px; background:rgba(255,255,255,.92); color:var(--ink); font-size:10px; font-weight:900; pointer-events:none; }
-.participant-videos { position:absolute; right:12px; bottom:12px; display:flex; flex-direction:row-reverse; gap:8px; z-index:2; pointer-events:none; }
+.participant-videos { position:absolute; right:16px; bottom:-32px; display:flex; flex-direction:row-reverse; gap:10px; z-index:2; pointer-events:none; padding:8px; border-radius:14px; background:rgba(255,255,255,.96); border:1px solid var(--line); box-shadow:0 10px 30px rgba(7,26,53,.14); }
 .video-tile { position:relative; width:150px; aspect-ratio:4/3; border:2px solid var(--white); border-radius:11px; overflow:hidden; background:var(--ink); box-shadow:0 8px 24px rgba(0,0,0,.3); }
 .video-tile.screen-tile { width:210px; aspect-ratio:16/9; }
 .video-tile video { width:100%; height:100%; object-fit:cover; }
 .video-tile span { position:absolute; left:7px; bottom:6px; padding:3px 6px; border-radius:5px; background:rgba(16,42,43,.76); color:white; font-size:10px; }
-.room-toolbar { display:flex; flex-wrap:wrap; gap:8px; padding:14px; border-top:1px solid var(--line); }
+.room-toolbar { display:flex; flex-wrap:wrap; gap:8px; padding:14px; border-top:1px solid var(--line); margin-top:36px; }
 .toolbar-button { border:1px solid var(--line); background:var(--white); padding:10px 13px; border-radius:9px; color:var(--ink); font-weight:700; }
 .toolbar-button.active { background:var(--coral); color:white; border-color:var(--coral); }
 .toolbar-button:disabled { opacity:.48; cursor:not-allowed; }

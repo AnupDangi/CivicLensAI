@@ -465,13 +465,8 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
         <div className="room-toolbar">
           <button className="toolbar-button" onClick={() => commandPlayer("playVideo")} disabled={!canControl}>▶ Play</button>
           <button className="toolbar-button" onClick={() => commandPlayer("pauseVideo")} disabled={!canControl}>Ⅱ Pause</button>
-          <button className={`toolbar-button ${mic ? "active" : ""}`} onClick={toggleMic} disabled={!status.configured || screenSharing}>{mic ? "● Mic live" : "◉ Join voice"}</button>
+          {/* voice transcription disabled — fact-check only video source, single transcript rendered to all */}
           <button className={`toolbar-button ${camera ? "active" : ""}`} onClick={toggleCamera} disabled={!status.configured}>{camera ? "■ Camera on" : "▣ Camera off"}</button>
-          {showShareButton ? (
-            <button className={`toolbar-button ${screenSharing ? "active" : ""}`} onClick={toggleScreenShare} disabled={!status.configured}>{screenSharing ? "■ Stop sharing" : "▤ Share video + audio"}</button>
-          ) : screenSharing ? (
-            <button className="toolbar-button active" onClick={toggleScreenShare}>■ Stop sharing</button>
-          ) : null}
           {!autoTranscriptReady && !transcriptStopped ? (
             <button className="toolbar-button" onClick={stopTranscript}>■ Stop transcript</button>
           ) : transcriptStopped ? (
