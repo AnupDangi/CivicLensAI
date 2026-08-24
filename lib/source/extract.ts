@@ -123,20 +123,29 @@ async function extractYoutubeCaptions(source: NormalizedSource): Promise<Content
     signal: AbortSignal.timeout(20_000),
   });
   let language: string | undefined;
+  let isLive = false;
   try {
     const playerResponse = await timedFetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
       method: "POST",
       headers: { "content-type": "application/json", "user-agent": "com.google.android.youtube/20.10.38 (Linux; U; Android 14)" },
       body: JSON.stringify({ context: { client: { clientName: "ANDROID", clientVersion: "20.10.38" } }, videoId: source.externalId }),
     });
-    const player = await playerResponse.json() as { captions?: { playerCaptionsTracklistRenderer?: { captionTracks?: Array<{ languageCode?: string }>; audioTracks?: Array<{ defaultCaptionTrackIndex?: number }> } } };
+    const player = await playerResponse.json() as { captions?: { playerCaptionsTracklistRenderer?: { captionTracks?: Array<{ languageCode?: string }>; audioTracks?: Array<{ defaultCaptionTrackIndex?: number }> } }; playabilityStatus?: { liveStreamability?: { liveStreamabilityRenderer?: { offlineSlate?: unknown } } }; videoDetails?: { isLive?: boolean; isLiveContent?: boolean } };
     const renderer = player.captions?.playerCaptionsTracklistRenderer;
     const defaultIndex = renderer?.audioTracks?.find((track) => typeof track.defaultCaptionTrackIndex === "number")?.defaultCaptionTrackIndex;
     language = typeof defaultIndex === "number" ? renderer?.captionTracks?.[defaultIndex]?.languageCode : undefined;
+    isLive = Boolean(player.videoDetails?.isLive || player.videoDetails?.isLiveContent);
   } catch {
     // The transcript package still has its own public-page fallback.
   }
-  const segments = await fetchTranscript(source.externalId, { fetch: timedFetch, lang: language });
+  let segments: Awaited<ReturnType<typeof fetchTranscript>> = [];
+  try {
+    segments = await fetchTranscript(source.externalId, { fetch: timedFetch, lang: language });
+  } catch (e) {
+    // youtube-transcript throws for live or no captions — treat as no static transcript
+    if (isLive) return undefined;
+    throw e;
+  }
   if (!segments.length) return;
   const originalLanguage = segments.find((segment) => segment.lang)?.lang || "und";
   const milliseconds = segments.some((segment) => segment.duration > 100);

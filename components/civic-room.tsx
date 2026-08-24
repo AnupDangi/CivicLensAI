@@ -437,6 +437,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
   const canControl = status.role === "HOST" || !status.configured;
   const transcriptArtifacts = analysis?.result?.artifacts.filter((artifact) => artifact.originalText && ["AUDIO", "VIDEO", "TEXT"].includes(artifact.kind)) || [];
   const autoTranscriptReady = transcriptArtifacts.length > 0 || FINISHED_STAGES.includes(analysis?.stage ?? "");
+  const showShareButton = status.configured && !autoTranscriptReady && !screenSharing;
 
   const stopTranscript = useCallback(() => {
     setTranscriptStopped(true);
@@ -477,8 +478,12 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
         <div className="room-toolbar">
           <button className="toolbar-button" onClick={() => commandPlayer("playVideo")} disabled={!canControl}>▶ Play</button>
           <button className="toolbar-button" onClick={() => commandPlayer("pauseVideo")} disabled={!canControl}>Ⅱ Pause</button>
-          {/* voice transcription disabled — fact-check only video source, single transcript rendered to all */}
           <button className={`toolbar-button ${camera ? "active" : ""}`} onClick={toggleCamera} disabled={!status.configured}>{camera ? "■ Camera on" : "▣ Camera off"}</button>
+          {showShareButton ? (
+            <button className="toolbar-button" onClick={toggleScreenShare} disabled={!status.configured}>▤ Share tab for live transcript</button>
+          ) : screenSharing ? (
+            <button className="toolbar-button active" onClick={toggleScreenShare}>■ Stop sharing</button>
+          ) : null}
           {!autoTranscriptReady && !transcriptStopped ? (
             <button className="toolbar-button" onClick={stopTranscript}>■ Stop transcript</button>
           ) : transcriptStopped ? (
@@ -512,7 +517,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
             {liveTranscripts.length > 0 && <article className="transcript-block live-transcript"><small><span className="status-dot"/> LiveKit room transcription</small><div className="live-transcript-lines">{liveTranscripts.map((segment) => <p className={segment.final ? "final" : "interim"} key={segment.id}><strong>{segment.participant}</strong>{segment.text}</p>)}</div></article>}
             {transcriptArtifacts.map((artifact, index) => <article className="transcript-block" key={`${artifact.kind}-${index}`}><small>{artifact.extractionMethod} · {artifact.originalLanguage}</small><pre>{artifact.originalText}</pre></article>)}
             {!liveTranscripts.length && !transcriptArtifacts.length
-              ? <div className="empty-state"><strong>Transcript loading</strong>{autoTranscriptReady ? "Transcript is being verified. Summary will appear in FACTS when ready." : "Captions are fetched automatically. No need to share audio — verification runs in the background."}</div>
+              ? <div className="empty-state"><strong>Transcript loading</strong>{analysis?.stage === "FAILED" ? "Transcript unavailable. Try pasting the video's auto-captions or use Priority check below." : autoTranscriptReady ? "Transcript is being verified. Summary will appear in FACTS when ready." : "For live videos, tap “Share tab for live transcript” and enable “Share tab audio” to transcribe the YouTube audio live. For uploaded videos, captions are fetched automatically."}</div>
               : null}
           </>}
           {tab === "DISCUSS" && <>
