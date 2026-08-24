@@ -26,7 +26,19 @@ export async function runAnalysis(id: string): Promise<void> {
   try {
     await updateAnalysis(id, { stage: "EXTRACTING", progress: 18 });
     const fixtureMode = process.env.FIXTURE_MODE === "true";
-    const extracted = fixtureMode ? fixtureExtraction(record.source) : await extractSource(record.source);
+    let extracted: ExtractedSource;
+    if (fixtureMode) {
+      try {
+        extracted = await extractSource(record.source);
+        // if extraction yields no real text, fall back to fixture placeholder
+        const hasText = extracted.artifacts.some((a) => (a.originalText || "").trim().length >= 80);
+        if (!hasText) extracted = fixtureExtraction(record.source);
+      } catch {
+        extracted = fixtureExtraction(record.source);
+      }
+    } else {
+      extracted = await extractSource(record.source);
+    }
     await updateAnalysis(id, { stage: "TRANSCRIBING", progress: 36 });
     if(!fixtureMode){
       extracted.artifacts=await Promise.all(extracted.artifacts.map(async(artifact)=>{
@@ -39,6 +51,9 @@ export async function runAnalysis(id: string): Promise<void> {
     let checked: Awaited<ReturnType<typeof factCheckArtifacts>>;
     try {
       checked = await factCheckArtifacts(extracted.artifacts, "auto");
+      if (checked.claims.length === 0 && !process.env.OPENROUTER_API_KEY && !fixtureMode) {
+        extracted.limitations.push("Transcript saved. Verification requires OPENROUTER_API_KEY (and optionally TAVILY_API_KEY) to extract and fact-check claims. Set them in Vercel env and redeploy.");
+      }
     } catch (error) {
       const reason = error instanceof Error ? error.message : "The fact-check provider failed.";
       checked = {

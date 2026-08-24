@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     // prune stale participants (>5 min old) to keep counts accurate - but keep 1-min threshold for "active"
     // We don't delete, just let active filter handle it; cleanup job can delete old rows periodically
     return NextResponse.json({ ok: true });
-  } catch (e) {
+  } catch (_e) {
     return NextResponse.json({ ok: true });
   }
 }

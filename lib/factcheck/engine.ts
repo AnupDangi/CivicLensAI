@@ -29,6 +29,8 @@ function textForAnalysis(artifacts: ContentArtifact[]): string {
 function fixtureClaim(artifacts: ContentArtifact[]): ClaimResult[] {
   const text = artifacts.find((artifact) => artifact.originalText)?.originalText?.replace(/\s+/g, " ").trim();
   if (!text) return [];
+  // Don't create a fake claim from the YouTube placeholder when no real transcript exists
+  if (text === "The video room is ready for transcript-backed claim detection." || text.includes("Development fixture")) return [];
   const sentence = text.split(/(?<=[.!?।])\s+/u).find((item) => item.length >= 25)?.slice(0, 280) ?? text.slice(0, 280);
   const summaries: Record<string, string> = {
     ne: "यो विकास-मोड जाँच हो। बाह्य खोज र मोडेल कुञ्जी उपलब्ध नभएसम्म दाबीको पुष्टि गर्न पर्याप्त स्वतन्त्र प्रमाण छैन।",
@@ -48,9 +50,13 @@ function fixtureClaim(artifacts: ContentArtifact[]): ClaimResult[] {
 }
 
 export async function factCheckArtifacts(artifacts: ContentArtifact[], displayLanguage = "auto"): Promise<{ claims: ClaimResult[]; detectedLanguages: string[]; fixture: boolean }> {
-  const fixtureMode = process.env.FIXTURE_MODE === "true" || !process.env.OPENROUTER_API_KEY;
+  const fixtureMode = process.env.FIXTURE_MODE === "true";
   if (fixtureMode) {
     return { claims: fixtureClaim(artifacts), detectedLanguages: [...new Set(artifacts.map((item) => item.originalLanguage))], fixture: true };
+  }
+  if (!process.env.OPENROUTER_API_KEY) {
+    // No LLM key: don't fabricate a claim; return transcript-only result so UI can show transcript without fake verdict
+    return { claims: [], detectedLanguages: [...new Set(artifacts.map((item) => item.originalLanguage))], fixture: false };
   }
 
   const extracted = await structuredCompletion({
