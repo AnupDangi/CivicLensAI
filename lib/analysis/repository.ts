@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { AnalysisRecord, AnalysisResult, AnalysisStage, NormalizedSource } from "@/lib/domain";
 import { getDatabase } from "@/lib/db/client";
 import { analysisRuns, claims, contentArtifacts, evidence, factChecks, sources } from "@/lib/db/schema";
@@ -41,7 +41,7 @@ export async function createAnalysis(source: NormalizedSource, displayLanguage: 
   }).onConflictDoUpdate({ target: sources.canonicalKey, set: { canonicalUrl: source.canonicalUrl, originalUrl: source.originalUrl, updatedAt: new Date() } }).returning();
 
   if (!refresh) {
-    const cachedRun = await db.select().from(analysisRuns).where(and(eq(analysisRuns.sourceId, sourceRow.id), gt(analysisRuns.createdAt, new Date(Date.now() - 86_400_000)))).orderBy(desc(analysisRuns.createdAt)).limit(1);
+    const cachedRun = await db.select().from(analysisRuns).where(eq(analysisRuns.sourceId, sourceRow.id)).orderBy(desc(analysisRuns.createdAt)).limit(1);
     if (cachedRun[0] && cachedRun[0].stage !== "FAILED") {
       const cachedRecord: AnalysisRecord = { id: cachedRun[0].id, source: sourceFromRow(sourceRow), displayLanguage: cachedRun[0].displayLanguage, stage: cachedRun[0].stage as AnalysisStage, progress: cachedRun[0].progress, result: cachedRun[0].resultJson ?? undefined, failureReason: cachedRun[0].failureReason ?? undefined, createdAt: cachedRun[0].createdAt.toISOString(), updatedAt: cachedRun[0].updatedAt.toISOString() };
       return { record: cachedRecord, reused: true };

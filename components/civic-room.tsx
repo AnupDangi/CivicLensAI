@@ -64,6 +64,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
   const [screenSharing, setScreenSharing] = useState(false);
   const [liveTranscripts, setLiveTranscripts] = useState<LiveTranscript[]>([]);
   const [transcriptStopped, setTranscriptStopped] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const analysisActiveRef = useRef(true);
@@ -436,7 +437,6 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
   const canControl = status.role === "HOST" || !status.configured;
   const transcriptArtifacts = analysis?.result?.artifacts.filter((artifact) => artifact.originalText && ["AUDIO", "VIDEO", "TEXT"].includes(artifact.kind)) || [];
   const autoTranscriptReady = transcriptArtifacts.length > 0 || FINISHED_STAGES.includes(analysis?.stage ?? "");
-  const showShareButton = status.configured && !autoTranscriptReady && !screenSharing && liveTranscripts.length === 0;
 
   const stopTranscript = useCallback(() => {
     setTranscriptStopped(true);
@@ -451,6 +451,18 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
     analysisActiveRef.current = true;
     setAnalysisMessage("Resuming transcript…");
   }, []);
+
+  const shareRoom = useCallback(async () => {
+    const joinUrl = `${window.location.origin}/room/${encodeURIComponent(videoId)}`;
+    try {
+      await navigator.clipboard.writeText(joinUrl);
+      setShareCopied(true);
+      setStatus((s) => ({ ...s, message: "Link copied — anyone with the link can join this room." }));
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      window.prompt("Copy this link to invite others:", joinUrl);
+    }
+  }, [videoId]);
 
   return <div className="app-shell">
     <AppHeader label={status.configured ? `${participants.length + 1} in room` : "Room preview"}/>
@@ -472,7 +484,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
           ) : transcriptStopped ? (
             <button className="toolbar-button active" onClick={resumeTranscript}>▶ Resume</button>
           ) : null}
-          <button className="toolbar-button" onClick={() => navigator.clipboard.writeText(location.href)}>↗ Share room</button>
+          <button className="toolbar-button" onClick={shareRoom}>{shareCopied ? "✓ Copied!" : "↗ Share room"}</button>
           <a className="toolbar-button" href={`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`} target="_blank" rel="noreferrer">↗ Open source</a>
         </div>
         <div className="panel-pad room-summary">
