@@ -393,14 +393,15 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
           <button className="toolbar-button" onClick={() => commandPlayer("pauseVideo")} disabled={!canControl}>Ⅱ Pause</button>
           <button className={`toolbar-button ${mic ? "active" : ""}`} onClick={toggleMic} disabled={!status.configured || screenSharing}>{mic ? "● Mic live" : "◉ Join voice"}</button>
           <button className={`toolbar-button ${camera ? "active" : ""}`} onClick={toggleCamera} disabled={!status.configured}>{camera ? "■ Camera on" : "▣ Camera off"}</button>
-          <button className={`toolbar-button ${screenSharing ? "active" : ""}`} onClick={toggleScreenShare} disabled={!status.configured}>{screenSharing ? "■ Stop sharing" : "▤ Share video + audio"}</button>
+          {!screenSharing && <button className={`toolbar-button ${screenSharing ? "active" : ""}`} onClick={toggleScreenShare} disabled={!status.configured}>{screenSharing ? "■ Stop sharing" : "▤ Share video + audio"}</button>}
+          <button className="toolbar-button" onClick={() => setTab("TRANSCRIPT")} disabled={!status.configured} aria-label="View transcript">⁝</button>
           <button className="toolbar-button" onClick={() => navigator.clipboard.writeText(location.href)}>↗ Share room</button>
           <a className="toolbar-button" href={`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`} target="_blank" rel="noreferrer">↗ Open source</a>
         </div>
         <div className="panel-pad room-summary">
           <div><span className="eyebrow">YouTube civic room</span><h1 className="analysis-title">Watch together. Check the record.</h1></div>
           <div className="room-live-status"><span className="status-dot"/><strong>Automatic language detection</strong><small>{analysisMessage}</small></div>
-          <p className="source-url">{status.message}. Camera is off by default. For a YouTube live transcript, share its browser tab and enable “Share tab audio”.</p>
+          <p className="source-url">{status.message}. Transcript detected automatically from video.</p>
         </div>
       </section>
       <aside className="panel room-inspector">
