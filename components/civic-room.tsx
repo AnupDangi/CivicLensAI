@@ -52,7 +52,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
   const [participants, setParticipants] = useState<string[]>([]);
   const [tab, setTab] = useState<"FACTS" | "TRANSCRIPT" | "DISCUSS">("FACTS");
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: "welcome", author: "CivicLens", body: "This discussion is temporary. Share evidence, not personal information." },
+    { id: "welcome", author: "CivicLens", body: "Evidence-first discussion. Your comments are persisted and visible to anyone with this link." },
   ]);
   const [draftBody, setDraftBody] = useState("");
   const [analysis, setAnalysis] = useState<AnalysisRecord>();
@@ -124,7 +124,11 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
       try {
         const packet = JSON.parse(new TextDecoder().decode(payload)) as Packet;
         if (topic === "civic.chat" && packet.type === "chat") {
-          setMessages((current) => [...current, { id: browserUuid(), author: participant?.name || packet.author, body: packet.body }]);
+          setMessages((current) => {
+            const isDuplicate = current.some((m) => m.body === packet.body && m.author === (participant?.name || packet.author));
+            if (isDuplicate) return current;
+            return [...current, { id: browserUuid(), author: participant?.name || packet.author, body: packet.body }];
+          });
         }
         if (topic === "civic.playback" && packet.type === "playback") applyPlayerCommand(iframeRef.current, packet.command, packet.args);
       } catch {
@@ -281,18 +285,36 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
     event.preventDefault();
     const body = draftBody.trim();
     if (!body) return;
-    setMessages((current) => [...current, { id: browserUuid(), author: "You", body }]);
+    const displayName = status.displayName || "You";
     setDraftBody("");
     setIsPosting(true);
+    // optimistic local message (single source of truth) — add once to messages
+    const localId = browserUuid();
+    setMessages((current) => [...current, { id: localId, author: displayName, body }]);
+    // broadcast to other participants via LiveKit data channel
+    try {
+      const room = liveRoom.current;
+      if (room && room.state === "connected") {
+        const payload = new TextEncoder().encode(JSON.stringify({ type: "chat", author: displayName, body } as Packet));
+        await room.localParticipant.publishData(payload, { reliable: true, topic: "civic.chat" } as unknown as { reliable: boolean; topic: string });
+      }
+    } catch {
+      // non-fatal: DB persistence will still make it visible on reload
+    }
     try {
       const res = await fetch("/api/comments", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ videoId, body }),
+        body: JSON.stringify({ videoId, body, authorName: status.displayName, isAnonymous: false }),
       });
       const json = await res.json();
       if (json.comment) {
-        setComments((current) => [json.comment, ...current]);
+        // replace optimistic message with persisted comment (avoid double)
+        setMessages((current) => current.filter((m) => m.id !== localId));
+        setComments((current) => {
+          if (current.some((c) => c.id === json.comment.id)) return current;
+          return [json.comment, ...current];
+        });
       }
     } catch (error) {
       console.error("Comment submit error:", error);
@@ -413,6 +435,8 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
 
   const canControl = status.role === "HOST" || !status.configured;
   const transcriptArtifacts = analysis?.result?.artifacts.filter((artifact) => artifact.originalText && ["AUDIO", "VIDEO", "TEXT"].includes(artifact.kind)) || [];
+  const autoTranscriptReady = transcriptArtifacts.length > 0 || FINISHED_STAGES.includes(analysis?.stage ?? "");
+  const showShareButton = status.configured && !autoTranscriptReady && !screenSharing && liveTranscripts.length === 0;
 
   const stopTranscript = useCallback(() => {
     setTranscriptStopped(true);
@@ -443,12 +467,16 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
           <button className="toolbar-button" onClick={() => commandPlayer("pauseVideo")} disabled={!canControl}>Ⅱ Pause</button>
           <button className={`toolbar-button ${mic ? "active" : ""}`} onClick={toggleMic} disabled={!status.configured || screenSharing}>{mic ? "● Mic live" : "◉ Join voice"}</button>
           <button className={`toolbar-button ${camera ? "active" : ""}`} onClick={toggleCamera} disabled={!status.configured}>{camera ? "■ Camera on" : "▣ Camera off"}</button>
-          <button className={`toolbar-button ${screenSharing ? "active" : ""}`} onClick={toggleScreenShare} disabled={!status.configured}>{screenSharing ? "■ Stop sharing" : "▤ Share video + audio"}</button>
-          {!transcriptStopped ? (
-            <button className="toolbar-button" onClick={stopTranscript} disabled={FINISHED_STAGES.includes(analysis?.stage ?? "")}>■ Stop transcript</button>
-          ) : (
+          {showShareButton ? (
+            <button className={`toolbar-button ${screenSharing ? "active" : ""}`} onClick={toggleScreenShare} disabled={!status.configured}>{screenSharing ? "■ Stop sharing" : "▤ Share video + audio"}</button>
+          ) : screenSharing ? (
+            <button className="toolbar-button active" onClick={toggleScreenShare}>■ Stop sharing</button>
+          ) : null}
+          {!autoTranscriptReady && !transcriptStopped ? (
+            <button className="toolbar-button" onClick={stopTranscript}>■ Stop transcript</button>
+          ) : transcriptStopped ? (
             <button className="toolbar-button active" onClick={resumeTranscript}>▶ Resume</button>
-          )}
+          ) : null}
           <button className="toolbar-button" onClick={() => navigator.clipboard.writeText(location.href)}>↗ Share room</button>
           <a className="toolbar-button" href={`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`} target="_blank" rel="noreferrer">↗ Open source</a>
         </div>
@@ -477,7 +505,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
             {liveTranscripts.length > 0 && <article className="transcript-block live-transcript"><small><span className="status-dot"/> LiveKit room transcription</small><div className="live-transcript-lines">{liveTranscripts.map((segment) => <p className={segment.final ? "final" : "interim"} key={segment.id}><strong>{segment.participant}</strong>{segment.text}</p>)}</div></article>}
             {transcriptArtifacts.map((artifact, index) => <article className="transcript-block" key={`${artifact.kind}-${index}`}><small>{artifact.extractionMethod} · {artifact.originalLanguage}</small><pre>{artifact.originalText}</pre></article>)}
             {!liveTranscripts.length && !transcriptArtifacts.length
-              ? <div className="empty-state"><strong>Waiting for room audio</strong>Use “Share video + audio”, choose the YouTube browser tab, and enable “Share tab audio”. The server transcriber will detect the language automatically.</div>
+              ? <div className="empty-state"><strong>Transcript loading</strong>{autoTranscriptReady ? "Transcript is being verified. Summary will appear in FACTS when ready." : "Captions are fetched automatically. No need to share audio — verification runs in the background."}</div>
               : null}
           </>}
           {tab === "DISCUSS" && <>
