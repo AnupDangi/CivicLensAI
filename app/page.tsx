@@ -1,5 +1,6 @@
 import { SiteHeader } from "@/components/site-header";
 import { UrlAnalyzer } from "@/components/url-analyzer";
+import { LandingStats, RecentSources } from "@/components/landing-stats";
 
 const sourceItems = [
   ["▶", "YouTube"],
@@ -11,7 +12,7 @@ const sourceItems = [
   ["⌁", "Public pages"],
 ];
 
-export default function Home() {
+export default async function Home() {
   return <main>
     <SiteHeader/>
     <section className="hero">
@@ -34,6 +35,16 @@ export default function Home() {
     </section>
 
     <section className="source-strip" aria-label="Supported sources"><div className="shell">{sourceItems.map(([icon,label]) => <div className="source-item" key={label}><span className="source-icon" aria-hidden="true">{icon}</span><strong>{label}</strong></div>)}</div></section>
+
+    <LandingStats />
+    <section className="section" id="recent">
+      <div className="shell">
+        <div className="section-heading">
+          <div><span className="eyebrow">Recent links</span><h2>What the community is checking</h2></div><p>Up to 8 most recent links. Click to join the room and see transcript, evidence and discussion.</p>
+        </div>
+        <RecentSources />
+      </div>
+    </section>
 
     <section className="section section-dark" id="method"><div className="shell">
       <div className="section-heading"><div><span className="eyebrow eyebrow-light">How it works</span><h2>From statement<br/>to source.</h2></div><p>CivicLens does not ask a model to guess what is true. It separates extraction, multilingual retrieval, and evidence assessment into visible steps.</p></div>

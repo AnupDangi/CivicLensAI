@@ -63,6 +63,10 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
   const [camera, setCamera] = useState(false);
   const [screenSharing, setScreenSharing] = useState(false);
   const [liveTranscripts, setLiveTranscripts] = useState<LiveTranscript[]>([]);
+  const [transcriptStopped, setTranscriptStopped] = useState(false);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const analysisActiveRef = useRef(true);
 
   const upsertTranscript = useCallback((segment: LiveTranscript) => {
     setLiveTranscripts((current) => {
@@ -180,6 +184,35 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
     };
   }, [upsertTranscript, videoId]);
 
+  // Heartbeat: keep participant alive, prune after 60s offline
+  useEffect(() => {
+    let hiddenAt: number | null = null;
+    const visitorId = typeof window !== "undefined" ? localStorage.getItem("civiclens.visitorId") : null;
+    const beat = () => {
+      if (!visitorId) return;
+      fetch("/api/rooms/heartbeat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ videoId, visitorId }),
+      }).catch(() => undefined);
+    };
+    beat();
+    const timer = setInterval(beat, 20_000);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") hiddenAt = Date.now();
+      else if (hiddenAt && Date.now() - hiddenAt > 60_000) {
+        setStatus((s) => ({ ...s, message: "Reconnecting…" }));
+        beat();
+      } else if (document.visibilityState === "visible") beat();
+      if (document.visibilityState === "visible") hiddenAt = null;
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [videoId]);
+
   useEffect(() => {
     let active = true;
     fetch(`/api/comments?videoId=${encodeURIComponent(videoId)}`, { cache: "no-store" })
@@ -193,30 +226,32 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
 
   useEffect(() => {
     let active = true;
-    let pollTimer: ReturnType<typeof setTimeout>;
-    let refreshTimer: ReturnType<typeof setTimeout>;
-
+    analysisActiveRef.current = true;
     async function poll(id: string) {
+      if (transcriptStopped || !analysisActiveRef.current) return;
       const response = await fetch(`/api/analyses/${id}`, { cache: "no-store" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Could not load the live analysis.");
-      if (!active) return;
-      setAnalysis(data);
-      setAnalysisMessage(data.stage === "FAILED"
-        ? `Live pass failed: ${data.failureReason || "the analysis provider is unavailable"}. CivicLens will retry in two minutes.`
-        : FINISHED_STAGES.includes(data.stage)
-        ? "Live pass complete. CivicLens will check for newer captions in two minutes."
-        : `${data.stage.replaceAll("_", " ").toLowerCase()} · ${data.progress}%`);
-      if (FINISHED_STAGES.includes(data.stage)) {
-        refreshTimer = setTimeout(() => {
-          if (document.visibilityState === "visible") void start(true);
-        }, LIVE_REFRESH_MS);
+      const data = await response.json() as AnalysisRecord & { error?: string };
+      if (!response.ok) throw new Error((data as unknown as { error?: string }).error || "Could not load the live analysis.");
+      if (!active || transcriptStopped || !analysisActiveRef.current) return;
+      setAnalysis(data as AnalysisRecord);
+      setAnalysisMessage(
+        (data as AnalysisRecord).stage === "FAILED"
+          ? `Live pass failed: ${(data as AnalysisRecord).failureReason || "the analysis provider is unavailable"}.`
+          : FINISHED_STAGES.includes((data as AnalysisRecord).stage)
+          ? "Live pass complete. Transcript verified."
+          : `${(data as AnalysisRecord).stage.replaceAll("_", " ").toLowerCase()} · ${(data as AnalysisRecord).progress}%`
+      );
+      if (FINISHED_STAGES.includes((data as AnalysisRecord).stage)) {
+        refreshTimerRef.current = setTimeout(() => {
+          if (!transcriptStopped && document.visibilityState === "visible") void start(true);
+        }, LIVE_REFRESH_MS) as unknown as ReturnType<typeof setTimeout>;
       } else {
-        pollTimer = setTimeout(() => void poll(id), 2_000);
+        pollTimerRef.current = setTimeout(() => void poll(id), 2_000) as unknown as ReturnType<typeof setTimeout>;
       }
     }
 
     async function start(refresh = false) {
+      if (transcriptStopped || !analysisActiveRef.current) return;
       try {
         setAnalysisMessage(refresh ? "Checking for new live captions…" : "Starting automatic transcript and evidence analysis…");
         const response = await fetch("/api/analyses", {
@@ -224,11 +259,11 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${videoId}`, refresh }),
         });
-        const data = await response.json();
+        const data = await response.json() as { analysisId: string; error?: string };
         if (!response.ok) throw new Error(data.error || "Could not start the live analysis.");
-        if (active) await poll(data.analysisId);
+        if (active && !transcriptStopped) await poll(data.analysisId);
       } catch (error) {
-        if (active) setAnalysisMessage(error instanceof Error ? error.message : "Live analysis is temporarily unavailable.");
+        if (active && !transcriptStopped) setAnalysisMessage(error instanceof Error ? error.message : "Live analysis is temporarily unavailable.");
       }
     }
 
@@ -236,10 +271,11 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
     else void start(false);
     return () => {
       active = false;
-      clearTimeout(pollTimer);
-      clearTimeout(refreshTimer);
+      analysisActiveRef.current = false;
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     };
-  }, [initialAnalysisId, videoId]);
+  }, [initialAnalysisId, videoId, transcriptStopped]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -378,6 +414,20 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
   const canControl = status.role === "HOST" || !status.configured;
   const transcriptArtifacts = analysis?.result?.artifacts.filter((artifact) => artifact.originalText && ["AUDIO", "VIDEO", "TEXT"].includes(artifact.kind)) || [];
 
+  const stopTranscript = useCallback(() => {
+    setTranscriptStopped(true);
+    analysisActiveRef.current = false;
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    setAnalysisMessage("Transcript stopped. Summary ready.");
+  }, []);
+
+  const resumeTranscript = useCallback(() => {
+    setTranscriptStopped(false);
+    analysisActiveRef.current = true;
+    setAnalysisMessage("Resuming transcript…");
+  }, []);
+
   return <div className="app-shell">
     <AppHeader label={status.configured ? `${participants.length + 1} in room` : "Room preview"}/>
     <main className="shell room-layout">
@@ -393,8 +443,12 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
           <button className="toolbar-button" onClick={() => commandPlayer("pauseVideo")} disabled={!canControl}>Ⅱ Pause</button>
           <button className={`toolbar-button ${mic ? "active" : ""}`} onClick={toggleMic} disabled={!status.configured || screenSharing}>{mic ? "● Mic live" : "◉ Join voice"}</button>
           <button className={`toolbar-button ${camera ? "active" : ""}`} onClick={toggleCamera} disabled={!status.configured}>{camera ? "■ Camera on" : "▣ Camera off"}</button>
-          {!screenSharing && <button className={`toolbar-button ${screenSharing ? "active" : ""}`} onClick={toggleScreenShare} disabled={!status.configured}>{screenSharing ? "■ Stop sharing" : "▤ Share video + audio"}</button>}
-          <button className="toolbar-button" onClick={() => setTab("TRANSCRIPT")} disabled={!status.configured} aria-label="View transcript">⁝</button>
+          <button className={`toolbar-button ${screenSharing ? "active" : ""}`} onClick={toggleScreenShare} disabled={!status.configured}>{screenSharing ? "■ Stop sharing" : "▤ Share video + audio"}</button>
+          {!transcriptStopped ? (
+            <button className="toolbar-button" onClick={stopTranscript} disabled={FINISHED_STAGES.includes(analysis?.stage ?? "")}>■ Stop transcript</button>
+          ) : (
+            <button className="toolbar-button active" onClick={resumeTranscript}>▶ Resume</button>
+          )}
           <button className="toolbar-button" onClick={() => navigator.clipboard.writeText(location.href)}>↗ Share room</button>
           <a className="toolbar-button" href={`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`} target="_blank" rel="noreferrer">↗ Open source</a>
         </div>
