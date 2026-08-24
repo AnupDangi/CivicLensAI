@@ -22,9 +22,11 @@ function sourceFromRow(row: typeof sources.$inferSelect): NormalizedSource {
 
 export async function createAnalysis(source: NormalizedSource, displayLanguage: string, refresh = false): Promise<{ record: AnalysisRecord; reused: boolean }> {
   const db = getDatabase();
+  const canonicalKey = source.canonicalKey;
+
   if (!db) {
     if (!refresh) {
-      const cached = [...memory.values()].find((item) => item.source.canonicalKey === source.canonicalKey && ["COMPLETE", "PARTIAL"].includes(item.stage) && Date.now() - Date.parse(item.createdAt) < 86_400_000);
+      const cached = [...memory.values()].find((item) => item.source.canonicalKey === canonicalKey && ["COMPLETE", "PARTIAL"].includes(item.stage) && Date.now() - Date.parse(item.createdAt) < 86_400_000);
       if (cached) return { record: cached, reused: true };
     }
     const createdAt = now();
@@ -34,14 +36,15 @@ export async function createAnalysis(source: NormalizedSource, displayLanguage: 
   }
 
   const [sourceRow] = await db.insert(sources).values({
-    kind: source.kind, originalUrl: source.originalUrl, canonicalUrl: source.canonicalUrl, canonicalKey: source.canonicalKey,
+    kind: source.kind, originalUrl: source.originalUrl, canonicalUrl: source.canonicalUrl, canonicalKey: canonicalKey,
     externalId: source.externalId, author: source.author, publishedAt: source.publishedAt ? new Date(source.publishedAt) : undefined,
   }).onConflictDoUpdate({ target: sources.canonicalKey, set: { canonicalUrl: source.canonicalUrl, originalUrl: source.originalUrl, updatedAt: new Date() } }).returning();
 
   if (!refresh) {
-    const cached = await db.select().from(analysisRuns).where(and(eq(analysisRuns.sourceId, sourceRow.id), gt(analysisRuns.createdAt, new Date(Date.now() - 86_400_000)))).orderBy(desc(analysisRuns.createdAt)).limit(1);
-    if (cached[0] && cached[0].stage !== "FAILED") {
-      return { record: { id: cached[0].id, source: sourceFromRow(sourceRow), displayLanguage: cached[0].displayLanguage, stage: cached[0].stage as AnalysisStage, progress: cached[0].progress, result: cached[0].resultJson ?? undefined, failureReason: cached[0].failureReason ?? undefined, createdAt: cached[0].createdAt.toISOString(), updatedAt: cached[0].updatedAt.toISOString() }, reused: true };
+    const cachedRun = await db.select().from(analysisRuns).where(and(eq(analysisRuns.sourceId, sourceRow.id), gt(analysisRuns.createdAt, new Date(Date.now() - 86_400_000)))).orderBy(desc(analysisRuns.createdAt)).limit(1);
+    if (cachedRun[0] && cachedRun[0].stage !== "FAILED") {
+      const cachedRecord: AnalysisRecord = { id: cachedRun[0].id, source: sourceFromRow(sourceRow), displayLanguage: cachedRun[0].displayLanguage, stage: cachedRun[0].stage as AnalysisStage, progress: cachedRun[0].progress, result: cachedRun[0].resultJson ?? undefined, failureReason: cachedRun[0].failureReason ?? undefined, createdAt: cachedRun[0].createdAt.toISOString(), updatedAt: cachedRun[0].updatedAt.toISOString() };
+      return { record: cachedRecord, reused: true };
     }
   }
   const [run] = await db.insert(analysisRuns).values({ sourceId: sourceRow.id, displayLanguage }).returning();
