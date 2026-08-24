@@ -4,6 +4,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["192.168.18.182"],
   poweredByHeader: false,
   reactStrictMode: true,
+  serverExternalPackages: ["jsdom", "@mozilla/readability", "postgres", "@livekit/rtc-node"],
   async headers() {
     return [{
       source: "/(.*)",

@@ -6,7 +6,7 @@
     "node": ">=24.0.0"
   },
   "overrides": {
-    "html-encoding-sniffer": "5.0.0"
+    "html-encoding-sniffer": "4.0.0"
   },
   "scripts": {
     "dev": "concurrently -k -n web,transcriber -c cyan,green \"next dev\" \"node --env-file-if-exists=.env agents/transcriber.mjs dev\"",

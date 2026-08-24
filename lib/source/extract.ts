@@ -1,7 +1,6 @@
 import "server-only";
 
 import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
 import { fetchTranscript } from "youtube-transcript";
 import type { ContentArtifact, ExtractedSource, NormalizedSource } from "@/lib/domain";
 import { safeFetchHtml } from "@/lib/source/security";
@@ -65,6 +64,7 @@ function pageArtifacts(document: Document, finalUrl: string, text: string, langu
 
 async function extractGeneric(source: NormalizedSource): Promise<ExtractedSource> {
   const fetched = await safeFetchHtml(source.canonicalUrl);
+  const { JSDOM } = await import("jsdom");
   const dom = new JSDOM(fetched.html, { url: fetched.url });
   const document = dom.window.document;
   const readable = new Readability(document.cloneNode(true) as Document).parse();
