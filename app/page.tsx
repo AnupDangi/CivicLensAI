@@ -6,6 +6,7 @@ const sourceItems = [
   ["▶", "YouTube"],
   ["𝕏", "X posts"],
   ["◎", "Instagram"],
+  ["f", "Facebook"],
   ["↟", "Reddit"],
   ["♪", "TikTok"],
   ["¶", "Articles"],
@@ -40,7 +41,7 @@ export default async function Home() {
     <section className="section" id="recent">
       <div className="shell">
         <div className="section-heading">
-          <div><span className="eyebrow">Recent links</span><h2>What the community is checking</h2></div><p>Up to 8 most recent links. Click to join the room and see transcript, evidence and discussion.</p>
+        <div><span className="eyebrow">Recent civic rooms</span><h2>What the community is checking</h2></div><p>Every checked public link has a shareable room for evidence, discussion, camera, and browser-tab video/audio.</p>
         </div>
         <RecentSources />
       </div>
@@ -56,7 +57,7 @@ export default async function Home() {
     </div></section>
 
     <section className="section demo-section" id="demo"><div className="shell demo-grid">
-      <div className="demo-copy"><span className="eyebrow">Live Civic Room</span><h2>Watch the source.<br/>See checks arrive.</h2><p>One YouTube video ID maps to one persistent room. Playback is host-controlled, camera starts off, and captions are rechecked automatically while the room stays open.</p><ul className="feature-checks"><li>Automatic transcript language detection</li><li>Evidence cards update inside the room</li><li>Voice, opt-in video, chat, and shared playback</li></ul><a className="text-link" href="#analyze">Open a YouTube room →</a></div>
+      <div className="demo-copy"><span className="eyebrow">Live Civic Room</span><h2>Open the source.<br/>See checks arrive.</h2><p>Every public link maps to one persistent room. YouTube supports host playback controls; articles and social links can be opened in a tab and shared with video/audio.</p><ul className="feature-checks"><li>Automatic transcript language detection</li><li>Evidence cards update inside the room</li><li>Voice, opt-in video, chat, and shared browser tabs</li></ul><a className="text-link" href="#analyze">Open a civic room →</a></div>
       <div className="demo-player"><video controls playsInline preload="metadata" poster="/demo/civiclens-room.png"><source src="/demo/civiclens-walkthrough.mp4" type="video/mp4"/>Your browser does not support the demo video.</video><div className="demo-caption"><span><i/> PRODUCT WALKTHROUGH</span><small>Recorded from the local production build</small></div></div>
     </div></section>
 

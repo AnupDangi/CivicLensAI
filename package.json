@@ -22,6 +22,7 @@
     "check:env:agent": "node --env-file-if-exists=.env scripts/check-env.mjs agent",
     "build:vercel": "npm run check:env:web && npm run build",
     "test": "vitest run",
+    "validate:sources": "vitest run tests/source-normalize.test.ts tests/source-extract.test.ts tests/source-social.test.ts tests/source-registry.test.ts",
     "test:watch": "vitest",
     "db:generate": "node --env-file-if-exists=.env node_modules/drizzle-kit/bin.cjs generate",
     "db:migrate": "node --env-file-if-exists=.env scripts/migrate.mjs"
@@ -36,7 +37,7 @@
     "@xpoz/xpoz": "^0.6.12",
     "drizzle-orm": "^0.45.2",
     "jose": "^6.1.3",
-    "jsdom": "^27.4.0",
+    "jsdom": "26.1.0",
     "livekit-client": "^2.22.0",
     "livekit-server-sdk": "^2.14.0",
     "next": "16.3.2",

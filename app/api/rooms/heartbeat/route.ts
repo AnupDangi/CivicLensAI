@@ -4,15 +4,15 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDatabase } from "@/lib/db/client";
 import { participants, rooms, sources } from "@/lib/db/schema";
 
-const Body = z.object({ videoId: z.string().regex(/^[\w-]{6,}$/), visitorId: z.string().uuid() });
+const SourceKey = z.string().regex(/^(youtube|x|instagram|reddit|tiktok|web):[\w-]+$/);
+const Body = z.object({ sourceKey: SourceKey, visitorId: z.string().uuid() });
 
 export async function POST(request: Request) {
   try {
     const body = Body.parse(await request.json());
     const db = getDatabase();
     if (!db) return NextResponse.json({ ok: true });
-    const canonicalKey = `youtube:${body.videoId}`;
-    const [source] = await db.select().from(sources).where(eq(sources.canonicalKey, canonicalKey)).limit(1);
+    const [source] = await db.select().from(sources).where(eq(sources.canonicalKey, body.sourceKey)).limit(1);
     if (!source) return NextResponse.json({ ok: true });
     const [room] = await db.select().from(rooms).where(eq(rooms.sourceId, source.id)).limit(1);
     if (!room) return NextResponse.json({ ok: true });
@@ -31,13 +31,12 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const videoId = searchParams.get("videoId");
-  if (!videoId) return NextResponse.json({ active: 0 });
+  const sourceKey = searchParams.get("sourceKey");
+  if (!sourceKey || !SourceKey.safeParse(sourceKey).success) return NextResponse.json({ active: 0 });
   const db = getDatabase();
   if (!db) return NextResponse.json({ active: 0 });
   try {
-    const canonicalKey = `youtube:${videoId}`;
-    const [source] = await db.select().from(sources).where(eq(sources.canonicalKey, canonicalKey)).limit(1);
+    const [source] = await db.select().from(sources).where(eq(sources.canonicalKey, sourceKey)).limit(1);
     if (!source) return NextResponse.json({ active: 0 });
     const [room] = await db.select().from(rooms).where(eq(rooms.sourceId, source.id)).limit(1);
     if (!room) return NextResponse.json({ active: 0 });

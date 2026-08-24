@@ -1,5 +1,5 @@
 import { describe,expect,it } from "vitest";
-import { normalizeSourceUrl,SourceUrlError } from "@/lib/source/normalize";
+import { canonicalKeyForRoomId, normalizeSourceUrl, roomIdForSource, SourceUrlError } from "@/lib/source/normalize";
 
 describe("normalizeSourceUrl",()=>{
   it.each([
@@ -25,5 +25,20 @@ describe("normalizeSourceUrl",()=>{
     const b=normalizeSourceUrl("https://example.com/news?a=1&b=2");
     expect(a.canonicalKey).toBe(b.canonicalKey);
     expect(a.canonicalUrl).toBe("https://example.com/news?a=1&b=2");
+  });
+
+  it("routes public Facebook URLs through the generic article path",()=>{
+    const source=normalizeSourceUrl("https://www.facebook.com/example/posts/1234567890?fbclid=tracking");
+    expect(source.kind).toBe("GENERIC_PAGE");
+    expect(source.canonicalUrl).toBe("https://facebook.com/example/posts/1234567890");
+  });
+
+  it("gives every supported public source a stable room URL",()=>{
+    const youtube=normalizeSourceUrl("https://youtu.be/dQw4w9WgXcQ");
+    const article=normalizeSourceUrl("https://example.com/news/story");
+    const social=normalizeSourceUrl("https://x.com/civiclens/status/1234567890");
+    expect(roomIdForSource(youtube)).toBe("dQw4w9WgXcQ");
+    expect(canonicalKeyForRoomId(roomIdForSource(article))).toBe(article.canonicalKey);
+    expect(canonicalKeyForRoomId(roomIdForSource(social))).toBe(social.canonicalKey);
   });
 });

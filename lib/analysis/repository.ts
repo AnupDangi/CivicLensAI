@@ -60,6 +60,21 @@ export async function getAnalysis(id: string): Promise<AnalysisRecord | undefine
   return { id: row.run.id, source: sourceFromRow(row.source), displayLanguage: row.run.displayLanguage, stage: row.run.stage as AnalysisStage, progress: row.run.progress, result: row.run.resultJson ?? undefined, failureReason: row.run.failureReason ?? undefined, createdAt: row.run.createdAt.toISOString(), updatedAt: row.run.updatedAt.toISOString() };
 }
 
+export async function getLatestAnalysisForSource(canonicalKey: string): Promise<AnalysisRecord | undefined> {
+  const db = getDatabase();
+  if (!db) {
+    return [...memory.values()]
+      .filter((record) => record.source.canonicalKey === canonicalKey)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+  }
+  const [row] = await db.select({ id: analysisRuns.id }).from(analysisRuns)
+    .innerJoin(sources, eq(analysisRuns.sourceId, sources.id))
+    .where(eq(sources.canonicalKey, canonicalKey))
+    .orderBy(desc(analysisRuns.createdAt))
+    .limit(1);
+  return row ? getAnalysis(row.id) : undefined;
+}
+
 export async function updateAnalysis(id: string, patch: Partial<Pick<AnalysisRecord, "stage" | "progress" | "result" | "failureReason">>): Promise<void> {
   const db = getDatabase();
   if (!db) {

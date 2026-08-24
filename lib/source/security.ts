@@ -4,6 +4,13 @@ import { isIP } from "node:net";
 const MAX_REDIRECTS = 4;
 export const MAX_HTML_BYTES = 5 * 1024 * 1024;
 
+export class SourceFetchError extends Error {
+  constructor(message: string, public readonly status?: number) {
+    super(message);
+    this.name = "SourceFetchError";
+  }
+}
+
 function isPrivateV4(address: string): boolean {
   const parts = address.split(".").map(Number);
   if (parts.length !== 4 || parts.some(Number.isNaN)) return false;
@@ -68,7 +75,7 @@ export async function safeFetchHtml(input: string): Promise<{ url: string; html:
       continue;
     }
 
-    if (!response.ok) throw new Error(`The source returned HTTP ${response.status}.`);
+    if (!response.ok) throw new SourceFetchError(`The source returned HTTP ${response.status}.`, response.status);
     const contentType = response.headers.get("content-type")?.split(";")[0] ?? "";
     if (!contentType.startsWith("text/html") && contentType !== "text/plain" && contentType !== "application/xhtml+xml") {
       throw new Error(`Unsupported page type: ${contentType || "unknown"}.`);
@@ -81,4 +88,28 @@ export async function safeFetchHtml(input: string): Promise<{ url: string; html:
     return { url: current.toString(), html: new TextDecoder().decode(bytes), contentType };
   }
   throw new Error("The source redirected too many times.");
+}
+
+/**
+ * Some publishers block cloud-server IP ranges even when their stories are
+ * public. Reader fetches the already-validated public URL from a browser-capable
+ * service and returns sanitized HTML for the same Readability path.
+ */
+export async function fetchReaderHtml(input: string): Promise<{ url: string; html: string; contentType: string }> {
+  const source = new URL(input);
+  await assertPublicUrl(source);
+  const response = await fetch(`https://r.jina.ai/${source.toString()}`, {
+    signal: AbortSignal.timeout(30_000),
+    headers: {
+      accept: "text/html,text/plain;q=0.9",
+      "x-respond-with": "html",
+      "x-respond-timing": "visible-content",
+    },
+  });
+  if (!response.ok) throw new SourceFetchError(`The reader fallback returned HTTP ${response.status}.`, response.status);
+  const declaredLength = Number(response.headers.get("content-length") ?? 0);
+  if (declaredLength > MAX_HTML_BYTES) throw new Error("The reader fallback exceeds the 5 MB extraction limit.");
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength > MAX_HTML_BYTES) throw new Error("The reader fallback exceeds the 5 MB extraction limit.");
+  return { url: source.toString(), html: new TextDecoder().decode(bytes), contentType: "text/html" };
 }

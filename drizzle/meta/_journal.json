@@ -22,6 +22,13 @@
       "when": 1787509650148,
       "tag": "0002_chunky_smasher",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787600000000,
+      "tag": "0003_room_transcript_history",
+      "breakpoints": true
     }
   ]
 }

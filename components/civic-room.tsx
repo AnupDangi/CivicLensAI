@@ -17,7 +17,7 @@ import { AppHeader } from "@/components/app-header";
 import { FactCard } from "@/components/fact-card";
 import { ManualFallback } from "@/components/manual-fallback";
 import { browserUuid } from "@/lib/client-id";
-import type { AnalysisRecord } from "@/lib/domain";
+import type { AnalysisRecord, NormalizedSource } from "@/lib/domain";
 
 type RoomStatus = { configured: boolean; role?: "HOST" | "PARTICIPANT"; displayName?: string; message: string; transcriptionReady?: boolean; transcriptionError?: string };
 type ChatMessage = { id: string; author: string; body: string };
@@ -33,16 +33,23 @@ type LiveTranscript = {
   language: string;
   final: boolean;
   participant: string;
+  startMs?: number;
+  endMs?: number;
 };
 
 const FINISHED_STAGES = ["COMPLETE", "PARTIAL", "FAILED"];
-const LIVE_REFRESH_MS = 120_000;
+// Keep the checks close enough to live for a shared broadcast, without starting
+// a new run for every interim caption update.
+const LIVE_REFRESH_MS = 30_000;
 
 function applyPlayerCommand(frame: HTMLIFrameElement | null, command: PlaybackCommand, args: (number | boolean)[]) {
   frame?.contentWindow?.postMessage(JSON.stringify({ event: "command", func: command, args }), "https://www.youtube.com");
 }
 
-export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; initialAnalysisId?: string }) {
+export function CivicRoom({ source, roomId, initialAnalysisId }: { source: NormalizedSource; roomId: string; initialAnalysisId?: string }) {
+  const sourceKey = source.canonicalKey;
+  const sourceUrl = source.canonicalUrl;
+  const isYouTube = source.kind === "YOUTUBE" && Boolean(source.externalId);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const videoStageRef = useRef<HTMLDivElement>(null);
   const liveRoom = useRef<Room | undefined>(undefined);
@@ -67,10 +74,12 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
   const [shareCopied, setShareCopied] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const discoveryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const analysisActiveRef = useRef(true);
+  const roomRoleRef = useRef<RoomStatus["role"]>(undefined);
+  const hostCapabilityRef = useRef<string | undefined>(undefined);
 
   const upsertTranscript = useCallback((segment: LiveTranscript) => {
-    if (segment.text.trim()) setTab("TRANSCRIPT");
     setLiveTranscripts((current) => {
       const existing = current.findIndex((item) => item.id === segment.id);
       if (existing < 0) return [...current, segment].slice(-100);
@@ -79,6 +88,26 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
       return next;
     });
   }, []);
+
+  const persistTranscript = useCallback((segment: LiveTranscript) => {
+    const hostCapability = hostCapabilityRef.current;
+    if (!segment.final || roomRoleRef.current !== "HOST" || !hostCapability) return;
+    void fetch("/api/rooms/transcript", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${hostCapability}` },
+      body: JSON.stringify({
+        sourceKey,
+        segment: {
+          id: segment.id,
+          text: segment.text,
+          language: segment.language,
+          startMs: segment.startMs ?? 0,
+          endMs: segment.endMs ?? 0,
+          speaker: segment.participant,
+        },
+      }),
+    }).catch(() => undefined);
+  }, [sourceKey]);
 
   useEffect(() => {
     let mounted = true;
@@ -119,6 +148,17 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
           language: segment.language || "und",
           final: segment.final,
           participant: participant?.name || participant?.identity || "Room audio",
+          startMs: Math.max(0, Math.round(segment.startTime * 1_000)),
+          endMs: Math.max(0, Math.round(segment.endTime * 1_000)),
+        });
+        if (segment.final) persistTranscript({
+          id: segment.id,
+          text: segment.text,
+          language: segment.language || "und",
+          final: true,
+          participant: participant?.name || participant?.identity || "Shared tab audio",
+          startMs: Math.max(0, Math.round(segment.startTime * 1_000)),
+          endMs: Math.max(0, Math.round(segment.endTime * 1_000)),
         });
       }
     };
@@ -153,7 +193,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
       const response = await fetch("/api/livekit/token", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ videoId, visitorId }),
+        body: JSON.stringify({ sourceUrl, visitorId }),
       });
       const data = await response.json();
       if (!mounted) return;
@@ -163,6 +203,8 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
       }
       await room.connect(data.url, data.token);
       if (!mounted) return;
+      roomRoleRef.current = data.role;
+      hostCapabilityRef.current = data.hostCapability;
       setStatus({
         configured: true,
         role: data.role,
@@ -183,7 +225,27 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
       sharedTracks.current = [];
       room.disconnect();
     };
-  }, [upsertTranscript, videoId]);
+  }, [persistTranscript, sourceUrl, upsertTranscript]);
+
+  useEffect(() => {
+    let active = true;
+    fetch(`/api/rooms/transcript?sourceKey=${encodeURIComponent(sourceKey)}`, { cache: "no-store" })
+      .then(async (response) => response.ok ? response.json() : { segments: [] })
+      .then((data) => {
+        if (!active) return;
+        for (const segment of data.segments ?? []) upsertTranscript({
+          id: segment.id,
+          text: segment.text,
+          language: segment.language,
+          final: true,
+          participant: segment.speaker,
+          startMs: segment.startMs,
+          endMs: segment.endMs,
+        });
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [sourceKey, upsertTranscript]);
 
   // Heartbeat: keep participant alive, prune after 60s offline
   useEffect(() => {
@@ -194,7 +256,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
       fetch("/api/rooms/heartbeat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ videoId, visitorId }),
+        body: JSON.stringify({ sourceKey, visitorId }),
       }).catch(() => undefined);
     };
     beat();
@@ -212,22 +274,23 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [videoId]);
+  }, [sourceKey]);
 
   useEffect(() => {
     let active = true;
-    fetch(`/api/comments?videoId=${encodeURIComponent(videoId)}`, { cache: "no-store" })
+    fetch(`/api/comments?sourceKey=${encodeURIComponent(sourceKey)}`, { cache: "no-store" })
       .then(async (response) => response.ok ? response.json() : { comments: [] })
       .then((data) => {
         if (active) setComments(data.comments ?? []);
       })
       .catch(() => undefined);
     return () => { active = false; };
-  }, [videoId]);
+  }, [sourceKey]);
 
   useEffect(() => {
     let active = true;
     analysisActiveRef.current = true;
+    if (!status.configured) return () => { active = false; };
     async function poll(id: string) {
       if (transcriptStopped || !analysisActiveRef.current) return;
       const response = await fetch(`/api/analyses/${id}`, { cache: "no-store" });
@@ -235,16 +298,23 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
       if (!response.ok) throw new Error((data as unknown as { error?: string }).error || "Could not load the live analysis.");
       if (!active || transcriptStopped || !analysisActiveRef.current) return;
       setAnalysis(data as AnalysisRecord);
+      const record = data as AnalysisRecord;
+      const includesLiveRoomTranscript = record.result?.artifacts.some((artifact) => artifact.extractionMethod === "livekit-room-transcript") ?? false;
       setAnalysisMessage(
-        (data as AnalysisRecord).stage === "FAILED"
-          ? `Live pass failed: ${(data as AnalysisRecord).failureReason || "the analysis provider is unavailable"}.`
-          : FINISHED_STAGES.includes((data as AnalysisRecord).stage)
-          ? "Live pass complete. Transcript verified."
-          : `${(data as AnalysisRecord).stage.replaceAll("_", " ").toLowerCase()} · ${(data as AnalysisRecord).progress}%`
+        record.stage === "FAILED"
+          ? `Live pass failed: ${record.failureReason || "the analysis provider is unavailable"}.`
+          : FINISHED_STAGES.includes(record.stage)
+          ? includesLiveRoomTranscript
+            ? "Live fact-check updated from saved shared-tab captions."
+            : "Source check complete. Start live transcription to verify shared-tab captions."
+          : `${record.stage.replaceAll("_", " ").toLowerCase()} · ${record.progress}%`
       );
       if (FINISHED_STAGES.includes((data as AnalysisRecord).stage)) {
         refreshTimerRef.current = setTimeout(() => {
-          if (!transcriptStopped && document.visibilityState === "visible") void start(true);
+          if (!transcriptStopped && document.visibilityState === "visible") {
+            if (status.role === "HOST") void start(true);
+            else void findOrStart();
+          }
         }, LIVE_REFRESH_MS) as unknown as ReturnType<typeof setTimeout>;
       } else {
         pollTimerRef.current = setTimeout(() => void poll(id), 2_000) as unknown as ReturnType<typeof setTimeout>;
@@ -252,13 +322,13 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
     }
 
     async function start(refresh = false) {
-      if (transcriptStopped || !analysisActiveRef.current) return;
+      if (status.role !== "HOST" || transcriptStopped || !analysisActiveRef.current) return;
       try {
         setAnalysisMessage(refresh ? "Checking for new live captions…" : "Starting automatic transcript and evidence analysis…");
         const response = await fetch("/api/analyses", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${videoId}`, refresh }),
+          body: JSON.stringify({ url: sourceUrl, refresh }),
         });
         const data = await response.json() as { analysisId: string; error?: string };
         if (!response.ok) throw new Error(data.error || "Could not start the live analysis.");
@@ -268,15 +338,39 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
       }
     }
 
-    if (initialAnalysisId) void poll(initialAnalysisId).catch(() => void start(false));
-    else void start(false);
+    async function findOrStart() {
+      if (transcriptStopped || !analysisActiveRef.current) return;
+      if (initialAnalysisId) {
+        void poll(initialAnalysisId).catch(() => void start(false));
+        return;
+      }
+      try {
+        const response = await fetch(`/api/rooms/analysis?sourceKey=${encodeURIComponent(sourceKey)}`, { cache: "no-store" });
+        const data = await response.json() as { analysis?: AnalysisRecord };
+        if (data.analysis) {
+          await poll(data.analysis.id);
+          return;
+        }
+        if (status.role === "HOST") {
+          await start(false);
+          return;
+        }
+        setAnalysisMessage("Waiting for the host to start the room’s background verification…");
+        discoveryTimerRef.current = setTimeout(() => void findOrStart(), 3_000) as unknown as ReturnType<typeof setTimeout>;
+      } catch (error) {
+        if (active && !transcriptStopped) setAnalysisMessage(error instanceof Error ? error.message : "Live analysis is temporarily unavailable.");
+      }
+    }
+
+    void findOrStart();
     return () => {
       active = false;
       analysisActiveRef.current = false;
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      if (discoveryTimerRef.current) clearTimeout(discoveryTimerRef.current);
     };
-  }, [initialAnalysisId, videoId, transcriptStopped]);
+  }, [initialAnalysisId, sourceKey, sourceUrl, status.configured, status.role, transcriptStopped]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -302,7 +396,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
       const res = await fetch("/api/comments", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ videoId, body, authorName: status.displayName, isAnonymous: false }),
+        body: JSON.stringify({ sourceKey, body, authorName: status.displayName, isAnonymous: false }),
       });
       const json = await res.json();
       if (json.comment) {
@@ -428,8 +522,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
         track.once(TrackEvent.Ended, () => void stopScreenShare());
       }
       setScreenSharing(true);
-      setTab("TRANSCRIPT");
-      setStatus((current) => ({ ...current, message: "Sharing the selected tab. Keep ‘Share tab audio’ enabled for live transcription." }));
+      setStatus((current) => ({ ...current, message: "Live transcription is running in the background. Keep ‘Share tab audio’ enabled." }));
     } catch (error) {
       await stopScreenShare();
       setStatus((current) => ({ ...current, message: error instanceof Error ? error.message : "Screen sharing was not granted." }));
@@ -439,10 +532,9 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
   const canControl = status.role === "HOST" || !status.configured;
   const transcriptArtifacts = analysis?.result?.artifacts.filter((artifact) => artifact.originalText && ["AUDIO", "VIDEO", "TEXT"].includes(artifact.kind)) || [];
   const hasSourceTranscript = transcriptArtifacts.length > 0;
-  // A completed analysis without an artifact means that YouTube did not expose
-  // captions. It must not hide the live-audio fallback (the state shown in the
-  // reported room screenshot).
-  const showShareButton = status.configured && status.role === "HOST" && !hasSourceTranscript && !screenSharing;
+  // A source’s scraped text must not disable tab sharing: hosts can add live
+  // audio/video context for any public URL, not only YouTube videos.
+  const showShareButton = status.configured && status.role === "HOST" && !screenSharing;
 
   const stopTranscript = useCallback(() => {
     setTranscriptStopped(true);
@@ -459,7 +551,7 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
   }, []);
 
   const shareRoom = useCallback(async () => {
-    const joinUrl = `${window.location.origin}/room/${encodeURIComponent(videoId)}`;
+    const joinUrl = `${window.location.origin}/room/${encodeURIComponent(roomId)}`;
     try {
       await navigator.clipboard.writeText(joinUrl);
       setShareCopied(true);
@@ -468,25 +560,27 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
     } catch {
       window.prompt("Copy this link to invite others:", joinUrl);
     }
-  }, [videoId]);
+  }, [roomId]);
 
   return <div className="app-shell">
     <AppHeader label={status.configured ? `${participants.length + 1} in room` : "Room preview"}/>
     <main className="shell room-layout">
       <section className="panel room-stage-panel">
         <div className="video-wrap">
-          <iframe ref={iframeRef} src={`https://www.youtube.com/embed/${encodeURIComponent(videoId)}?enablejsapi=1&playsinline=1&rel=0`} title="Shared YouTube video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen/>
+          {isYouTube
+            ? <iframe ref={iframeRef} src={`https://www.youtube.com/embed/${encodeURIComponent(source.externalId!)}?enablejsapi=1&playsinline=1&rel=0`} title="Shared YouTube video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen/>
+            : <div className="source-preview"><strong>Public source room</strong><p>Open the source in a browser tab, then use Start live transcription to share that tab’s video and audio with this room.</p><a href={sourceUrl} target="_blank" rel="noreferrer">↗ Open source</a></div>}
           <div className="participant-videos" ref={videoStageRef}/>
           <span className="video-badge">{status.role === "HOST" ? "HOST CONTROLS" : "CIVIC ROOM"}</span>
           <span className="live-analysis-badge"><span/> AUTO CHECKING</span>
         </div>
         <div className="room-toolbar">
-          <button className="toolbar-button" onClick={() => commandPlayer("playVideo")} disabled={!canControl}>▶ Play</button>
-          <button className="toolbar-button" onClick={() => commandPlayer("pauseVideo")} disabled={!canControl}>Ⅱ Pause</button>
+          {isYouTube && <button className="toolbar-button" onClick={() => commandPlayer("playVideo")} disabled={!canControl}>▶ Play</button>}
+          {isYouTube && <button className="toolbar-button" onClick={() => commandPlayer("pauseVideo")} disabled={!canControl}>Ⅱ Pause</button>}
           <button className={`toolbar-button ${mic ? "active" : ""}`} onClick={toggleMic} disabled={!status.configured}>{mic ? "● Mic on" : "◌ Mic off"}</button>
           <button className={`toolbar-button ${camera ? "active" : ""}`} onClick={toggleCamera} disabled={!status.configured}>{camera ? "■ Camera on" : "▣ Camera off"}</button>
           {showShareButton ? (
-            <button className="toolbar-button" onClick={toggleScreenShare} disabled={!status.configured}>▤ Share tab for live transcript</button>
+            <button className="toolbar-button" onClick={toggleScreenShare} disabled={!status.configured}>▶ Start live transcription</button>
           ) : screenSharing ? (
             <button className="toolbar-button active" onClick={toggleScreenShare}>■ Stop sharing</button>
           ) : null}
@@ -496,10 +590,10 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
             <button className="toolbar-button active" onClick={resumeTranscript}>▶ Resume</button>
           ) : null}
           <button className="toolbar-button" onClick={shareRoom}>{shareCopied ? "✓ Copied!" : "↗ Share room"}</button>
-          <a className="toolbar-button" href={`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`} target="_blank" rel="noreferrer">↗ Open source</a>
+          <a className="toolbar-button" href={sourceUrl} target="_blank" rel="noreferrer">↗ Open source</a>
         </div>
         <div className="panel-pad room-summary">
-          <div><span className="eyebrow">YouTube civic room</span><h1 className="analysis-title">Watch together. Check the record.</h1></div>
+          <div><span className="eyebrow">{isYouTube ? "YouTube civic room" : "Public-source civic room"}</span><h1 className="analysis-title">Watch together. Check the record.</h1></div>
           <div className="room-live-status"><span className="status-dot"/><strong>{status.transcriptionReady === false ? "Live transcript unavailable" : "Automatic language detection"}</strong><small>{status.transcriptionReady === false ? status.transcriptionError || "The transcription worker could not join this room." : analysisMessage}</small></div>
           <p className="source-url">{status.message}{status.transcriptionReady === false ? " Configure and deploy the named LiveKit transcriber to restore live captions." : " Live captions are broadcast to everyone in this room."}</p>
         </div>
@@ -515,15 +609,15 @@ export function CivicRoom({ videoId, initialAnalysisId }: { videoId: string; ini
             <div className="live-pipeline"><span className={analysis && FINISHED_STAGES.includes(analysis.stage) ? "complete" : "running"}/><div><strong>Live evidence pipeline</strong><small>{analysisMessage}</small></div></div>
             {analysis?.result?.claims.length
               ? <div className="room-facts">{analysis.result.claims.map((claim) => <FactCard claim={claim} key={claim.id}/>)}</div>
-              : <div className="empty-state compact"><strong>Listening for checkable claims</strong>Captions are detected automatically. Claims appear here only after evidence retrieval.</div>}
+              : <div className="empty-state compact"><strong>Listening for checkable claims</strong>{liveTranscripts.length ? "Saved shared-tab captions are checked in the background every 30 seconds. Claims appear here after evidence retrieval." : "Start live transcription to check the shared browser tab. Personal meeting microphones are never transcribed."}</div>}
             <div className="manual-check"><p className="fact-label">Priority check</p><ManualFallback/></div>
           </>}
           {tab === "TRANSCRIPT" && <>
-            <div className="transcript-heading"><div><p className="fact-label">Detected automatically</p><strong>{analysis?.result?.detectedLanguages.filter((language) => language !== "und").join(" · ") || "Automatic multilingual transcription"}</strong></div><span>{liveTranscripts.length} live · {transcriptArtifacts.length} source</span></div>
+            <div className="transcript-heading"><div><p className="fact-label">Detected automatically</p><strong>{analysis?.result?.detectedLanguages.filter((language) => language !== "und").join(" · ") || "Automatic multilingual transcription"}</strong></div><span>{liveTranscripts.length} saved/live · {transcriptArtifacts.length} source</span></div>
             {liveTranscripts.length > 0 && <article className="transcript-block live-transcript"><small><span className="status-dot"/> LiveKit room transcription</small><div className="live-transcript-lines">{liveTranscripts.map((segment) => <p className={segment.final ? "final" : "interim"} key={segment.id}><strong>{segment.participant}</strong>{segment.text}</p>)}</div></article>}
             {transcriptArtifacts.map((artifact, index) => <article className="transcript-block" key={`${artifact.kind}-${index}`}><small>{artifact.extractionMethod} · {artifact.originalLanguage}</small><pre>{artifact.originalText}</pre></article>)}
             {!liveTranscripts.length && !transcriptArtifacts.length
-              ? <div className="empty-state"><strong>{FINISHED_STAGES.includes(analysis?.stage ?? "") ? "No public captions available" : "Transcript loading"}</strong>{FINISHED_STAGES.includes(analysis?.stage ?? "") ? "For live video, share the browser tab and enable “Share tab audio”. Live captions will then appear here for everyone in the room." : "Looking for public captions. If the stream has none, share the browser tab with “Share tab audio” enabled to start live captions."}</div>
+              ? <div className="empty-state"><strong>{FINISHED_STAGES.includes(analysis?.stage ?? "") ? "No source transcript available" : "Transcript loading"}</strong>{FINISHED_STAGES.includes(analysis?.stage ?? "") ? "Open the public source in a browser tab, then share that tab with “Share tab audio” enabled. Live captions will appear here for everyone in the room." : "Looking for source text. You can share a browser tab with “Share tab audio” enabled to add live captions."}</div>
               : null}
           </>}
           {tab === "DISCUSS" && <>

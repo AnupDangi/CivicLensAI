@@ -3,7 +3,7 @@ import { z } from "zod";
 import { createAnalysis } from "@/lib/analysis/repository";
 import { runAnalysis } from "@/lib/analysis/pipeline";
 import { rateLimit, requestIdentity } from "@/lib/http/rate-limit";
-import { normalizeSourceUrl, SourceUrlError } from "@/lib/source/normalize";
+import { normalizeSourceUrl, roomIdForSource, SourceUrlError } from "@/lib/source/normalize";
 
 const RequestSchema = z.object({
   url: z.string().max(2048),
@@ -30,9 +30,7 @@ export async function POST(request: Request) {
         after(() => runAnalysis(record.id));
       }
     }
-    const destination = source.kind === "YOUTUBE"
-      ? `/room/${source.externalId}?analysis=${record.id}`
-      : `/check/${record.id}`;
+    const destination = `/room/${roomIdForSource(source)}?analysis=${record.id}`;
     return NextResponse.json({ analysisId: record.id, resultUrl: `/check/${record.id}`, destination, status: record.stage, reused }, { status: 202 });
   } catch (error) {
     const message = error instanceof SourceUrlError ? error.message : error instanceof z.ZodError ? "Check the submitted URL." : "The analysis could not be started.";

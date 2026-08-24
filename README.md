@@ -27,9 +27,10 @@ This source does not expose reusable public captions, and embed availability has
 ## Implemented product
 
 - One URL entry point and canonical IDs for YouTube, X, Instagram, Reddit, TikTok, articles, and generic public pages.
-- Persistent YouTube rooms: the same video ID always resolves to the same room, whether the video is live or recorded.
+- Persistent civic rooms for every supported public URL: the same canonical YouTube, article, or public social link resolves to the same room. YouTube has embedded playback controls; other sources can be opened in a tab and shared with audio/video.
 - Host-controlled shared YouTube play/pause, anonymous LiveKit presence, voice, chat, moderation, opt-in camera, and browser-tab video/audio sharing. Camera is off on every join.
-- A server-side LiveKit Agents worker transcribes shared tab audio with automatic language detection and streams interim/final text into the room inspector. Public-caption checks continue as an independent source layer.
+- A single named LiveKit worker per room transcribes only the host's explicitly shared tab audio (never meeting microphones). Final segments are retained in the room transcript history, streamed to every participant, and included in the host-led background verification refresh.
+- Public HTML is fetched server-side with SSRF and size protections, parsed by Readability, and falls back to a browser-capable reader only when a publisher blocks direct cloud access.
 - Xpoz ingestion for X, Instagram, Reddit, and TikTok, with managed-extractor and paste/upload fallbacks.
 - SSRF-safe fetching, safe redirects, MIME and size limits, article Readability extraction, one-level linked-page extraction, and visible coverage manifests.
 - Multilingual structured claim extraction and evidence-constrained assessment through OpenRouter.
@@ -132,6 +133,8 @@ GET  /api/analyses/:id
 POST /api/uploads/presign
 POST /api/claims
 POST /api/livekit/token
+GET|POST /api/rooms/transcript
+GET /api/rooms/analysis
 POST /api/rooms/:id/moderation
 POST /api/jobs/analysis
 ```

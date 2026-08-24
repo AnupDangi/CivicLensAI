@@ -1,9 +1,12 @@
 /* eslint-disable react-hooks/error-boundaries */
+import { connection } from "next/server";
 import { getDatabase } from "@/lib/db/client";
 import { sources, analysisRuns } from "@/lib/db/schema";
 import { desc, eq, sql } from "drizzle-orm";
+import { roomIdForCanonicalKey } from "@/lib/source/normalize";
 
 export async function LandingStats() {
+  await connection();
   const db = getDatabase();
   if (!db) return null;
   try {
@@ -33,6 +36,7 @@ export async function LandingStats() {
 }
 
 export async function RecentSources() {
+  await connection();
   const db = getDatabase();
   if (!db) return <p className="empty-state">Add a link to get started.</p>;
   try {
@@ -62,8 +66,7 @@ export async function RecentSources() {
           .orderBy(desc(analysisRuns.createdAt))
           .limit(1);
         let href: string;
-        if (s.kind === "YOUTUBE" && s.externalId) href = `/room/${encodeURIComponent(s.externalId)}${run ? `?analysis=${run.id}` : ""}`;
-        else if (run) href = `/check/${run.id}`;
+        if (run) href = `/room/${encodeURIComponent(roomIdForCanonicalKey(s.canonicalKey))}?analysis=${run.id}`;
         else href = s.canonicalUrl;
         const label =
           s.kind === "YOUTUBE"
@@ -90,7 +93,7 @@ export async function RecentSources() {
               <strong>{s.label}</strong>
               <span>{s.title}</span>
             </div>
-            <span className="link-url">{s.canonicalUrl.slice(0, 70)}{s.canonicalUrl.length > 70 ? "…" : ""}</span>
+            <div className="recent-link-action"><span className="link-url">{s.canonicalUrl.slice(0, 70)}{s.canonicalUrl.length > 70 ? "…" : ""}</span><strong>Join room →</strong></div>
           </a>
         ))}
       </div>

@@ -50,13 +50,14 @@ export const transcriptSegments = pgTable("transcript_segments", {
   id: uuid("id").defaultRandom().primaryKey(),
   analysisId: uuid("analysis_id").references(() => analysisRuns.id, { onDelete: "cascade" }),
   roomId: uuid("room_id"),
+  externalId: varchar("external_id", { length: 160 }),
   originalText: text("original_text").notNull(),
   language: varchar("language", { length: 35 }).notNull().default("und"),
   startMs: integer("start_ms").notNull(),
   endMs: integer("end_ms").notNull(),
   speaker: text("speaker"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => [uniqueIndex("transcript_room_segment_uq").on(table.roomId, table.externalId)]);
 
 export const claims = pgTable("claims", {
   id: uuid("id").primaryKey(),

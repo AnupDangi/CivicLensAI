@@ -4,8 +4,9 @@ import { z } from "zod";
 import { getOrCreateRoom, guestName } from "@/lib/rooms/store";
 import { signHostCapability } from "@/lib/rooms/auth";
 import { ensureTranscriberDispatch } from "@/lib/rooms/transcriber";
+import { normalizeSourceUrl } from "@/lib/source/normalize";
 
-const RequestSchema = z.object({ videoId: z.string().regex(/^[\w-]{6,}$/), visitorId: z.string().uuid() });
+const RequestSchema = z.object({ sourceUrl: z.string().url().max(2_048), visitorId: z.string().uuid() });
 
 export async function POST(request: Request) {
   try {
@@ -13,15 +14,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ configured: false, error: "LiveKit is not configured; room preview remains available." }, { status: 503 });
     }
     const body = RequestSchema.parse(await request.json());
-    const { room, role, reused } = await getOrCreateRoom(body.videoId, body.visitorId);
+    const source = normalizeSourceUrl(body.sourceUrl);
+    const { room, role, reused } = await getOrCreateRoom(source, body.visitorId);
     let transcription: { ready: boolean; error?: string } = { ready: true };
-    try {
-      await ensureTranscriberDispatch(room.name);
-    } catch (error) {
-      // Do not prevent people from using the room when the worker deployment is
-      // temporarily unavailable, but make the missing live captions explicit.
-      transcription = { ready: false, error: error instanceof Error ? error.message : "The transcription worker could not be started." };
-      console.error("Could not dispatch CivicLens transcriber", { room: room.name, error });
+    // The host is the only participant allowed to share tab audio, so it is
+    // also the only browser allowed to create the room's single transcription job.
+    if (role === "HOST") {
+      try {
+        await ensureTranscriberDispatch(room.name);
+      } catch (error) {
+        // Do not prevent people from using the room when the worker deployment is
+        // temporarily unavailable, but make the missing live captions explicit.
+        transcription = { ready: false, error: error instanceof Error ? error.message : "The transcription worker could not be started." };
+        console.error("Could not dispatch CivicLens transcriber", { room: room.name, error });
+      }
     }
     const identity = `guest-${body.visitorId}`;
     const token = new AccessToken(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, { identity, name: guestName(body.visitorId), metadata: JSON.stringify({ role }) });

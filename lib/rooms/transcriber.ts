@@ -3,6 +3,9 @@ import "server-only";
 import { AgentDispatchClient } from "livekit-server-sdk";
 
 const DEFAULT_TRANSCRIBER_AGENT_NAME = "civiclens-transcriber";
+const state = globalThis as typeof globalThis & { __civicLensTranscriberDispatches?: Map<string, Promise<{ agentName: string; reused: boolean }>> };
+const inFlight = state.__civicLensTranscriberDispatches ?? new Map<string, Promise<{ agentName: string; reused: boolean }>>();
+state.__civicLensTranscriberDispatches = inFlight;
 
 /**
  * This name must be the same in the web deployment and the LiveKit worker
@@ -14,6 +17,18 @@ export function transcriberAgentName() {
 }
 
 export async function ensureTranscriberDispatch(roomName: string) {
+  const pending = inFlight.get(roomName);
+  if (pending) return pending;
+  const dispatch = ensureTranscriberDispatchInner(roomName);
+  inFlight.set(roomName, dispatch);
+  try {
+    return await dispatch;
+  } finally {
+    inFlight.delete(roomName);
+  }
+}
+
+async function ensureTranscriberDispatchInner(roomName: string) {
   const url = process.env.LIVEKIT_URL;
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import type { NormalizedSource } from "@/lib/domain";
+import { roomIdForSource } from "@/lib/rooms/id";
+export { canonicalKeyForRoomId, roomIdForCanonicalKey, roomIdForSource } from "@/lib/rooms/id";
 
 export class SourceUrlError extends Error {
   constructor(message: string, public readonly code: string) {
@@ -104,7 +106,5 @@ export function normalizeSourceUrl(input: string): NormalizedSource {
 }
 
 export function analysisDestination(source: NormalizedSource): string {
-  return source.kind === "YOUTUBE"
-    ? `/room/${encodeURIComponent(source.externalId ?? "")}`
-    : `/check/${encodeURIComponent(source.canonicalKey.replace(":", "-"))}`;
+  return `/room/${encodeURIComponent(roomIdForSource(source))}`;
 }

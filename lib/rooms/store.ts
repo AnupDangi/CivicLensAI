@@ -2,22 +2,25 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { getDatabase } from "@/lib/db/client";
 import { rooms, participants, sources } from "@/lib/db/schema";
+import { roomIdForSource } from "@/lib/source/normalize";
+import type { NormalizedSource } from "@/lib/domain";
 
-type RoomState={name:string;videoId:string;hostCapabilityHash:string;createdAt:string};
+type RoomState={name:string;canonicalKey:string;hostCapabilityHash:string;createdAt:string};
 const state=globalThis as typeof globalThis&{__civicLensRooms?:Map<string,RoomState>};
 const memory=state.__civicLensRooms??new Map<string,RoomState>();state.__civicLensRooms=memory;
 
 function visitorHash(visitorId:string){return createHash("sha256").update(`${process.env.HOST_TOKEN_SECRET||"development"}:${visitorId}`).digest("hex")}
 
-export async function getOrCreateRoom(videoId:string,visitorId:string):Promise<{room:RoomState;role:"HOST"|"PARTICIPANT";reused:boolean}>{
+export function liveKitRoomName(source: NormalizedSource): string { return `civic-${roomIdForSource(source)}`; }
+
+export async function getOrCreateRoom(sourceInput:NormalizedSource,visitorId:string):Promise<{room:RoomState;role:"HOST"|"PARTICIPANT";reused:boolean}>{
   const hash=visitorHash(visitorId);const db=getDatabase();
-  if(!db){let room=memory.get(videoId);const reused=Boolean(room);if(!room){room={name:`civic-${videoId}`,videoId,hostCapabilityHash:hash,createdAt:new Date().toISOString()};memory.set(videoId,room)}return {room,role:room.hostCapabilityHash===hash?"HOST":"PARTICIPANT",reused}}
-  const canonicalKey=`youtube:${videoId}`;const canonicalUrl=`https://www.youtube.com/watch?v=${videoId}`;
-  const [source]=await db.insert(sources).values({kind:"YOUTUBE",originalUrl:canonicalUrl,canonicalUrl,canonicalKey,externalId:videoId}).onConflictDoUpdate({target:sources.canonicalKey,set:{canonicalUrl,updatedAt:new Date()}}).returning();
+  if(!db){let room=memory.get(sourceInput.canonicalKey);const reused=Boolean(room);if(!room){room={name:liveKitRoomName(sourceInput),canonicalKey:sourceInput.canonicalKey,hostCapabilityHash:hash,createdAt:new Date().toISOString()};memory.set(sourceInput.canonicalKey,room)}return {room,role:room.hostCapabilityHash===hash?"HOST":"PARTICIPANT",reused}}
+  const [source]=await db.insert(sources).values({kind:sourceInput.kind,originalUrl:sourceInput.originalUrl,canonicalUrl:sourceInput.canonicalUrl,canonicalKey:sourceInput.canonicalKey,externalId:sourceInput.externalId,author:sourceInput.author,publishedAt:sourceInput.publishedAt?new Date(sourceInput.publishedAt):undefined}).onConflictDoUpdate({target:sources.canonicalKey,set:{canonicalUrl:sourceInput.canonicalUrl,originalUrl:sourceInput.originalUrl,updatedAt:new Date()}}).returning();
   let roomRow=(await db.select().from(rooms).where(eq(rooms.sourceId,source.id)).limit(1))[0];
   const reused=Boolean(roomRow);
   if(!roomRow){
-    [roomRow]=await db.insert(rooms).values({sourceId:source.id,hostCapabilityHash:hash,title:`YouTube room ${videoId}`}).onConflictDoNothing({target:rooms.sourceId}).returning();
+    [roomRow]=await db.insert(rooms).values({sourceId:source.id,hostCapabilityHash:hash,title:`Civic room for ${new URL(sourceInput.canonicalUrl).hostname}`}).onConflictDoNothing({target:rooms.sourceId}).returning();
     // Another request may have created the canonical room between our select and insert.
     roomRow ??= (await db.select().from(rooms).where(eq(rooms.sourceId,source.id)).limit(1))[0];
   }
@@ -32,7 +35,7 @@ export async function getOrCreateRoom(videoId:string,visitorId:string):Promise<{
     await db.insert(participants).values({roomId:roomRow.id,anonymousId:visitorId,livekitIdentity:identity,displayName:guestName(visitorId),role,joinedAt:sql`now()`,lastSeenAt:sql`now()`});
   }
   await db.update(rooms).set({lastActiveAt:sql`now()`}).where(eq(rooms.id,roomRow.id));
-  const room:RoomState={name:`civic-${videoId}`,videoId,hostCapabilityHash:roomRow.hostCapabilityHash,createdAt:roomRow.createdAt.toISOString()};
+  const room:RoomState={name:liveKitRoomName(sourceInput),canonicalKey:sourceInput.canonicalKey,hostCapabilityHash:roomRow.hostCapabilityHash,createdAt:roomRow.createdAt.toISOString()};
   return {room,role,reused};
 }
 

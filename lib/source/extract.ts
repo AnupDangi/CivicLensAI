@@ -3,8 +3,9 @@ import "server-only";
 import { Readability } from "@mozilla/readability";
 import { fetchTranscript } from "youtube-transcript";
 import type { ContentArtifact, ExtractedSource, NormalizedSource } from "@/lib/domain";
-import { safeFetchHtml } from "@/lib/source/security";
+import { fetchReaderHtml, safeFetchHtml, SourceFetchError } from "@/lib/source/security";
 import { extractSocialWithXpoz } from "@/lib/source/xpoz";
+import { getRoomTranscript } from "@/lib/rooms/transcript-history";
 
 const MAX_TEXT_CHARS = 100_000;
 const MAX_IMAGES = 12;
@@ -32,13 +33,13 @@ function absoluteUrl(value: string, base: string): string | undefined {
   }
 }
 
-function pageArtifacts(document: Document, finalUrl: string, text: string, language: string): ContentArtifact[] {
+function pageArtifacts(document: Document, finalUrl: string, text: string, language: string, extractionMethod = "readability"): ContentArtifact[] {
   const artifacts: ContentArtifact[] = [{
     kind: "TEXT",
     sourceUrl: finalUrl,
     originalLanguage: language,
     originalText: text.slice(0, MAX_TEXT_CHARS),
-    extractionMethod: "readability",
+    extractionMethod,
     coverage: text.length > MAX_TEXT_CHARS ? "PARTIAL" : "COMPLETE",
     failureReason: text.length > MAX_TEXT_CHARS ? "Text was truncated at 100,000 characters." : undefined,
   }];
@@ -63,7 +64,15 @@ function pageArtifacts(document: Document, finalUrl: string, text: string, langu
 }
 
 async function extractGeneric(source: NormalizedSource): Promise<ExtractedSource> {
-  const fetched = await safeFetchHtml(source.canonicalUrl);
+  let fetched: Awaited<ReturnType<typeof safeFetchHtml>>;
+  let usedReaderFallback = false;
+  try {
+    fetched = await safeFetchHtml(source.canonicalUrl);
+  } catch (error) {
+    if (!(error instanceof SourceFetchError) || ![401, 403, 429].includes(error.status ?? 0)) throw error;
+    fetched = await fetchReaderHtml(source.canonicalUrl);
+    usedReaderFallback = true;
+  }
   const { JSDOM } = await import("jsdom");
   const dom = new JSDOM(fetched.html, { url: fetched.url });
   const document = dom.window.document;
@@ -82,8 +91,11 @@ async function extractGeneric(source: NormalizedSource): Promise<ExtractedSource
     source: extractedSource,
     title,
     author: readable?.byline ?? undefined,
-    artifacts: pageArtifacts(document, fetched.url, text, language),
-    limitations: readable ? [] : ["The page did not expose article metadata; CivicLens analyzed visible page text."],
+    artifacts: pageArtifacts(document, fetched.url, text, language, usedReaderFallback ? "reader-fallback-readability" : "readability"),
+    limitations: [
+      ...(readable ? [] : ["The page did not expose article metadata; CivicLens analyzed visible page text."]),
+      ...(usedReaderFallback ? ["The publisher blocked direct server access; CivicLens analyzed the public reader fallback instead."] : []),
+    ],
   };
 }
 
@@ -114,6 +126,24 @@ function transcriptTimestamp(offset: number, milliseconds: boolean): string {
   return hours > 0
     ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
     : `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+async function appendLiveRoomTranscript(extracted: ExtractedSource): Promise<ExtractedSource> {
+  if (extracted.artifacts.some((artifact) => artifact.extractionMethod === "livekit-room-transcript")) return extracted;
+  const roomTranscript = await getRoomTranscript(extracted.source.canonicalKey);
+  if (!roomTranscript.length) return extracted;
+  extracted.artifacts.push({
+    kind: "AUDIO",
+    sourceUrl: extracted.source.canonicalUrl,
+    originalLanguage: roomTranscript.find((segment) => segment.language !== "und")?.language || "und",
+    originalText: roomTranscript.map((segment) => `[${transcriptTimestamp(segment.startMs, true)}] ${segment.text}`).join("\n").slice(0, MAX_TEXT_CHARS),
+    extractionMethod: "livekit-room-transcript",
+    coverage: "PARTIAL",
+    failureReason: "Live room audio is checked from the host-shared tab; source text and visual coverage may still be incomplete.",
+    metadata: { segmentCount: roomTranscript.length, includesTimestamps: true },
+  });
+  extracted.limitations.push("Live tab-audio captions were analyzed. CivicLens refreshes this room in the background as new segments arrive.");
+  return extracted;
 }
 
 async function extractYoutubeCaptions(source: NormalizedSource): Promise<ContentArtifact | undefined> {
@@ -171,14 +201,14 @@ async function extractYoutubeCaptions(source: NormalizedSource): Promise<Content
 export async function extractSource(source: NormalizedSource): Promise<ExtractedSource> {
   if (["X_POST","INSTAGRAM_POST","REDDIT_POST","TIKTOK_POST"].includes(source.kind)) {
     const xpoz = await extractSocialWithXpoz(source).catch(() => undefined);
-    if (xpoz) return xpoz;
+    if (xpoz) return appendLiveRoomTranscript(xpoz);
     const managed = await extractManaged(source).catch(() => undefined);
-    if (managed) return managed;
+    if (managed) return appendLiveRoomTranscript(managed);
     throw new Error("The social post could not be retrieved through Xpoz. Use the paste/upload fallback.");
   }
   if (source.kind === "YOUTUBE") {
     const managed = await extractManaged(source).catch(() => undefined);
-    if (managed) return managed;
+    if (managed) return appendLiveRoomTranscript(managed);
     const endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(source.canonicalUrl)}&format=json`;
     const response = await fetch(endpoint, { signal: AbortSignal.timeout(10_000) });
     const data = response.ok ? await response.json() as Record<string, string> : {};
@@ -194,7 +224,7 @@ export async function extractSource(source: NormalizedSource): Promise<Extracted
       },
     ];
     if (captions) artifacts.push(captions);
-    return {
+    return appendLiveRoomTranscript({
       source,
       title: data.title || "YouTube civic room",
       author: data.author_name,
@@ -202,13 +232,13 @@ export async function extractSource(source: NormalizedSource): Promise<Extracted
       limitations: captions
         ? ["Public captions were analyzed. Visual claims still require managed frame extraction."]
         : ["No public captions were available yet. CivicLens will retry during the live room refresh cycle."],
-    };
+    });
   }
   try {
-    return await extractGeneric(source);
+    return appendLiveRoomTranscript(await extractGeneric(source));
   } catch (error) {
     const managed = await extractManaged(source).catch(() => undefined);
-    if (managed) return managed;
+    if (managed) return appendLiveRoomTranscript(managed);
     throw error;
   }
 }
