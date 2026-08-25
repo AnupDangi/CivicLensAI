@@ -555,7 +555,7 @@ const disconnectRoom = useCallback(() => {
   const transcriptArtifacts = result.artifacts.filter((artifact) => artifact.originalText && ["AUDIO", "VIDEO", "TEXT"].includes(artifact.kind)) || [];
   const hasSourceTranscript = transcriptArtifacts.length > 0;
   const hasSourceText = transcriptArtifacts.length > 0;
-  const hasServerSourceText = hasSourceText && transcriptArtifacts.some((artifact) => artifact.kind === "TEXT" && artifact.extractionMethod !== "livekit-room-transcript") || hasSourceText && transcriptArtifacts.some((artifact) => artifact?.kind === "TEXT" && artifact.originalText?.trim().length > 0);
+  const hasServerSourceText = hasSourceText && transcriptArtifacts.some((artifact) => artifact.kind === "TEXT" && artifact.extractionMethod !== "livekit-room-transcript") || hasSourceText && transcriptArtifacts.length > 0 && transcriptArtifacts.some((artifact) => { const t = artifact.originalText; return t && t.trim().length > 0; });
   // A source's scraped text must not disable tab sharing: hosts can add live
   // audio/video context for any public URL, not only YouTube videos.
   const showShareButton = status.configured && status.role === "HOST" && !screenSharing;

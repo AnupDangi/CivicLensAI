@@ -50,7 +50,7 @@ export async function runAnalysis(id: string): Promise<void> {
     await updateAnalysis(id, { stage: "EXTRACTING_CLAIMS", progress: 52 });
     let checked: Awaited<ReturnType<typeof factCheckArtifacts>>;
     try {
-      checked = await factCheckArtifacts(extracted.artifacts, source.kind !== "YOUTUBE" ? "auto" : "skip");
+      checked = await factCheckArtifacts(extracted.artifacts, extracted.source.kind !== "YOUTUBE" ? "auto" : "skip");
       if (checked.claims.length === 0 && !process.env.OPENROUTER_API_KEY && !fixtureMode) {
         extracted.limitations.push("Transcript saved. Verification requires OPENROUTER_API_KEY (and optionally TAVILY_API_KEY) to extract and fact-check claims. Set them in Vercel env and redeploy.");
       }
