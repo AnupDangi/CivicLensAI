@@ -19,7 +19,7 @@ export default defineAgent({
     const activeTracks = new Map();
     const recognizer = new inference.STT({
       model: process.env.LIVEKIT_STT_MODEL || "deepgram/nova-3",
-      language: process.env.LIVEKIT_STT_LANGUAGE || "multi",
+      language: process.env.LIVEKIT_STT_LANGUAGE || "en",
     });
 
     const stopTrack = (trackSid) => {
