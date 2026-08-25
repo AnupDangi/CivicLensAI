@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Room,
   RoomEvent,
@@ -72,6 +73,7 @@ export function CivicRoom({ source, roomId, initialAnalysisId }: { source: Norma
   const [liveTranscripts, setLiveTranscripts] = useState<LiveTranscript[]>([]);
   const [transcriptStopped, setTranscriptStopped] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
+  const router = useRouter();
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const discoveryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -232,9 +234,18 @@ export function CivicRoom({ source, roomId, initialAnalysisId }: { source: Norma
       stageOnMount?.replaceChildren();
       sharedTracks.current.forEach((track) => track.stop());
       sharedTracks.current = [];
-      room.disconnect();
+      liveRoom.current?.disconnect();
+      router.replace("/");
     };
-  }, [persistTranscript, sourceUrl, upsertTranscript]);
+  }, [persistTranscript, sourceUrl, upsertTranscript, sharedTracks, router]);
+
+const disconnectRoom = useCallback(() => {
+    setStatus({ configured: false, message: "Left the room" });
+    liveRoom.current?.disconnect();
+    sharedTracks.current.forEach((track) => track.stop());
+    sharedTracks.current = [];
+    router.replace("/");
+  }, [liveRoom, sharedTracks, router]);
 
   useEffect(() => {
     let active = true;
@@ -540,10 +551,12 @@ export function CivicRoom({ source, roomId, initialAnalysisId }: { source: Norma
   }
 
   const canControl = status.role === "HOST" || !status.configured;
-  const transcriptArtifacts = analysis?.result?.artifacts.filter((artifact) => artifact.originalText && ["AUDIO", "VIDEO", "TEXT"].includes(artifact.kind)) || [];
+  const result = analysis?.result || { artifacts: [] };
+  const transcriptArtifacts = result.artifacts.filter((artifact) => artifact.originalText && ["AUDIO", "VIDEO", "TEXT"].includes(artifact.kind)) || [];
   const hasSourceTranscript = transcriptArtifacts.length > 0;
-  const hasServerSourceText = transcriptArtifacts.some((artifact) => artifact.kind === "TEXT" && artifact.extractionMethod !== "livekit-room-transcript");
-  // A source’s scraped text must not disable tab sharing: hosts can add live
+  const hasSourceText = transcriptArtifacts.length > 0;
+  const hasServerSourceText = hasSourceText && transcriptArtifacts.some((artifact) => artifact.kind === "TEXT" && artifact.extractionMethod !== "livekit-room-transcript") || hasSourceText && transcriptArtifacts.some((artifact) => artifact?.kind === "TEXT" && artifact.originalText?.trim().length > 0);
+  // A source's scraped text must not disable tab sharing: hosts can add live
   // audio/video context for any public URL, not only YouTube videos.
   const showShareButton = status.configured && status.role === "HOST" && !screenSharing;
 
@@ -595,13 +608,30 @@ export function CivicRoom({ source, roomId, initialAnalysisId }: { source: Norma
           ) : screenSharing ? (
             <button className="toolbar-button active" onClick={toggleScreenShare}>■ Stop sharing</button>
           ) : null}
-          {!hasSourceTranscript && !transcriptStopped ? (
-            <button className="toolbar-button" onClick={stopTranscript}>■ Stop transcript</button>
-          ) : transcriptStopped ? (
-            <button className="toolbar-button active" onClick={resumeTranscript}>▶ Resume</button>
-          ) : null}
-          <button className="toolbar-button" onClick={shareRoom}>{shareCopied ? "✓ Copied!" : "↗ Share room"}</button>
-          <a className="toolbar-button" href={sourceUrl} target="_blank" rel="noreferrer">↗ Open source</a>
+{!status.configured ? (
+        <button className="toolbar-button" onClick={connect}>Join</button>
+      ) : (
+        <>
+          <button className="toolbar-button" onClick={disconnectRoom}>Leave</button>
+          <span className="participant-count">{participants.length} in room</span>
+        </>
+      )}
+      {isYouTube && <button className="toolbar-button" onClick={() => commandPlayer("playVideo")} disabled={!canControl}>▶ Play</button>}
+      {isYouTube && <button className="toolbar-button" onClick={() => commandPlayer("pauseVideo")} disabled={!canControl}>Ⅱ Pause</button>}
+      <button className={`toolbar-button ${mic ? "active" : ""}`} onClick={toggleMic} disabled={!status.configured}>{mic ? "● Mic on" : "◌ Mic off"}</button>
+      <button className={`toolbar-button ${camera ? "active" : ""}`} onClick={toggleCamera} disabled={!status.configured}>{camera ? "■ Camera on" : "▣ Camera off"}</button>
+      {showShareButton ? (
+        <button className="toolbar-button" onClick={toggleScreenShare} disabled={!status.configured}>▶ Start live transcription</button>
+      ) : screenSharing ? (
+        <button className="toolbar-button active" onClick={toggleScreenShare}>■ Stop sharing</button>
+      ) : null}
+      {!hasSourceTranscript && !transcriptStopped ? (
+        <button className="toolbar-button" onClick={stopTranscript}>■ Stop transcript</button>
+      ) : transcriptStopped ? (
+        <button className="toolbar-button active" onClick={resumeTranscript}>▶ Resume</button>
+      ) : null}
+      <button className="toolbar-button" onClick={shareRoom}>{shareCopied ? "✓ Copied!" : "↗ Share room"}</button>
+      <a className="toolbar-button" href={sourceUrl} target="_blank" rel="noreferrer">↗ Open source</a>
         </div>
         <div className="panel-pad room-summary">
           <div><span className="eyebrow">{isYouTube ? "YouTube civic room" : "Public-source civic room"}</span><h1 className="analysis-title">Watch together. Check the record.</h1></div>
